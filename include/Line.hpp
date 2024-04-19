@@ -1,4 +1,5 @@
-#include "commons.h"
+#ifndef LINE_HPP
+#define LINE_HPP
 
 /** Represents Line in frame */
 class Line {
@@ -17,3 +18,5 @@ public:
     /** Calculates x value of line based on given y */
     double getX(double y);
 };
+
+#endif  // LINE_HPP

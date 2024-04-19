@@ -1,6 +1,9 @@
-#include "HoughTransform.h"
+#include "HoughTransform.hpp"
 
-using namespace thrust;
+#include <cmath>
+#include <cstring>
+#include <iostream>
+#include <vector>
 
 #define THETA_STEP_SIZE 0.1
 #define RHO_STEP_SIZE 2
@@ -21,7 +24,7 @@ using namespace thrust;
  * @return Rho describing distance of origin to closest point on tested line
  */
 __host__ __device__ double calcRho(double x, double y, double theta) {
-    double thetaRadian = (theta * PI) / 180.0;
+    double thetaRadian = (theta * M_PI) / 180.0;
 
     return x * cos(thetaRadian) + y * sin(thetaRadian);
 }
@@ -66,10 +69,10 @@ __host__ __device__ int index(int nRows, int nCols, int rho, double theta) {
  * @param frame Video frame on which hough transform is applied
  * @param lines Vector to which found lines are added to
  */
-void houghTransformSeq(HoughTransformHandle *handle, Mat frame, vector<Line> &lines) {
+void houghTransformSeq(HoughTransformHandle *handle, cv::Mat frame, std::vector<Line> &lines) {
     SeqHandle *h = (SeqHandle *) handle;
 
-    memset(h->accumulator, 0, h->nCols * h->nRows * sizeof(int));
+    std::memset(h->accumulator, 0, h->nCols * h->nRows * sizeof(int));
     int rho;
     double theta;
 
@@ -81,7 +84,7 @@ void houghTransformSeq(HoughTransformHandle *handle, Mat frame, vector<Line> &li
             // thetas of interest will be close to 45 and close to 135 (vertical lines)
             // we are doing 2 thetas at a time, 1 for each theta of Interest
             // we use thetas varying 15 degrees more and less
-            for(int k = 0; k < 2 * THETA_VARIATION * (1 / THETA_STEP_SIZE); k++){
+            for(int k = 0; k < 2 * THETA_VARIATION * (1 / THETA_STEP_SIZE); k++) {
                 theta = THETA_A - THETA_VARIATION + ((double) k * THETA_STEP_SIZE);
                 rho = calcRho(j, i, theta);
                 h->accumulator[index(h->nRows, h->nCols, rho, theta)] += 1;
@@ -155,18 +158,18 @@ __global__ void findLinesKernel(int nRows, int nCols, int *accumulator, int *lin
  * @param frame Video frame on which hough transform is applied
  * @param lines Vector to which found lines are added to
  */
-void houghTransformCuda(HoughTransformHandle *handle, Mat frame, vector<Line> &lines) {
+void houghTransformCuda(HoughTransformHandle *handle, cv::Mat frame, std::vector<Line> &lines) {
     CudaHandle *h = (CudaHandle *) handle;
 
     cudaMemcpy(h->d_frame, frame.ptr(), h->frameSize, cudaMemcpyHostToDevice);
     cudaMemset(h->d_accumulator, 0, h->nRows * h->nCols * sizeof(int));
 
-    houghKernel<<<h->houghGridDim,h->houghBlockDim>>>(frame.cols, frame.rows, h->d_frame, h->nRows, h->nCols, h->d_accumulator);
+    houghKernel<<<h->houghGridDim, h->houghBlockDim>>>(frame.cols, frame.rows, h->d_frame, h->nRows, h->nCols, h->d_accumulator);
     cudaDeviceSynchronize();
 
     cudaError err = cudaGetLastError();
     if (err != cudaSuccess)
-        printf("Error: %s\n", cudaGetErrorString( err ));
+        std::cerr << "Error: " << cudaGetErrorString(err) << std::endl;
 
     cudaMemset(h->d_lineCounter, 0, sizeof(int));
     findLinesKernel<<<h->findLinesGridDim, h->findLinesBlockDim>>>(h->nRows, h->nCols,
@@ -210,7 +213,7 @@ void createHandle(HoughTransformHandle *&handle, int houghStrategy, int frameWid
         handle = (HoughTransformHandle *) h;
     } else if (houghStrategy == SEQUENTIAL) {
         SeqHandle *h =  new SeqHandle();
-        h->accumulator = (int *) malloc(nRows * nCols * sizeof(int));
+        h->accumulator = new int[nRows * nCols];
         handle = (HoughTransformHandle *) h;
     }
 
@@ -236,9 +239,9 @@ void destroyHandle(HoughTransformHandle *&handle, int houghStrategy) {
         cudaFreeHost(h->lines);
     } else if (houghStrategy == SEQUENTIAL) {
         SeqHandle *h = (SeqHandle *) handle;
-        free(h->accumulator);
+        delete[] h->accumulator;
     }
 
-    free(handle);
+    delete handle;
     handle = NULL;
 }

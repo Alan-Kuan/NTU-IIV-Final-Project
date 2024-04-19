@@ -1,8 +1,15 @@
-#include <math.h>
-#include "commons.h"
-#include "Line.h"
-#include <thrust/device_vector.h>
-#include <thrust/host_vector.h>
+#ifndef HOUGH_TRANSFORM_H
+#define HOUGH_TRANSFORM_H
+
+#include <vector>
+
+#include <cuda_runtime.h>
+#include <opencv2/core.hpp>
+
+#include "Line.hpp"
+
+#define CUDA 1
+#define SEQUENTIAL 2
 
 /** 
  * Handle which tracks info that is required for every execution of hough 
@@ -67,7 +74,7 @@ void destroyHandle(HoughTransformHandle *&handle, int houghStrategy);
  * @param frame Video frame on which hough transform is applied
  * @param lines Vector to which found lines are added to 
  */
-void houghTransformSeq(HoughTransformHandle *handle, Mat frame, vector<Line> &lines);
+void houghTransformSeq(HoughTransformHandle *handle, cv::Mat frame, std::vector<Line> &lines);
 
 /**
  * Performs hough transform for given frame using CUDA and adds found lines
@@ -77,4 +84,6 @@ void houghTransformSeq(HoughTransformHandle *handle, Mat frame, vector<Line> &li
  * @param frame Video frame on which hough transform is applied
  * @param lines Vector to which found lines are added to 
  */
-void houghTransformCuda(HoughTransformHandle *handle, Mat frame, vector<Line> &lines);
+void houghTransformCuda(HoughTransformHandle *handle, cv::Mat frame, std::vector<Line> &lines);
+
+#endif  // HOUGH_TRANSFORM_H
