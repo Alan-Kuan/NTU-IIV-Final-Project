@@ -53,7 +53,7 @@ cv::Mat regionOfInterest(cv::Mat img) {
     cv::approxPolyDP(vertices, ROI_Poly, 1.0, true);
 
 	// Fill polygon white
-    cv::fillConvexPoly(mask, &ROI_Poly[0], ROI_Poly.size(), 255, 8, 0);
+    cv::fillConvexPoly(mask, ROI_Poly, 255, cv::LineTypes::LINE_8, 0);
 	cv::bitwise_and(img, mask, img);
 
 	return img;
