@@ -61,15 +61,16 @@ void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo, int h
 	clock_t prepTime = 0;
 	clock_t houghTime = 0;
 	clock_t writeTime = 0;
-    clock_t totalTime = -clock();
+    clock_t totalTime = 0;
+
+    std::cout << "Processing video " << (houghStrategy == CUDA ? "using CUDA" : "Sequentially") << std::endl;
+    totalTime -= clock();
 
     int frameWidth = inputVideo.get(cv::CAP_PROP_FRAME_WIDTH);
     int frameHeight = inputVideo.get(cv::CAP_PROP_FRAME_HEIGHT);
 
     HoughTransformHandle *handle;
     createHandle(handle, houghStrategy, frameWidth, frameHeight);
-
-    std::cout << "Processing video " << (houghStrategy == CUDA ? "using CUDA" : "Sequentially") << std::endl;
 
 	for( ; ; ) {
         // Read next frame
