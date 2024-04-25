@@ -25,8 +25,10 @@
  */
 __host__ __device__ double calcRho(double x, double y, double theta) {
     double thetaRadian = (theta * M_PI) / 180.0;
+    double sinVal, cosVal;
 
-    return x * cos(thetaRadian) + y * sin(thetaRadian);
+    sincos(thetaRadian, &sinVal, &cosVal);
+    return x * cosVal + y * sinVal;
 }
 
 /**
