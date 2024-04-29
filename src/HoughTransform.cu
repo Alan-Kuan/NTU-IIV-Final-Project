@@ -5,7 +5,7 @@
 #include <iostream>
 #include <vector>
 
-#include "nccl.h"
+#include <nccl.h>
 
 #define THETA_STEP_SIZE 0.1
 #define RHO_STEP_SIZE 2
@@ -202,10 +202,11 @@ void createHandle(HoughTransformHandle *&handle, int frameWidth, int frameHeight
 
     if (houghStrategy == HoughStrategy::kCuda) {
         CudaHandle *h = new CudaHandle();
-        h->nDevs = nDevs;
         // FIX: we assume device number divides global frame size
         h->frameSize = frameWidth * frameHeight * sizeof(uchar) / nDevs;
         h->splitStrategy = splitStrategy;
+
+        // buffers
         cudaMallocHost(&(h->lines), 2 * MAX_NUM_LINES * sizeof(int));
         h->lineCounter = 0;
 
@@ -220,6 +221,15 @@ void createHandle(HoughTransformHandle *&handle, int frameWidth, int frameHeight
             cudaMalloc(h->d_lineCounter + dev, sizeof(int));
             cudaMalloc(h->d_frame + dev, h->frameSize);
             cudaMalloc(h->d_accumulator + dev, nRows * nCols * sizeof(int));
+        }
+
+        // nccl
+        if (splitStrategy != SplitStrategy::kNone) {
+            h->comms = new ncclComm_t[nDevs];
+            h->nDevs = nDevs;
+            h->devs = new int[nDevs];
+            for (int i = 0; i < nDevs; i++) h->devs[i] = i;
+            ncclCommInitAll(h->comms, nDevs, h->devs);
         }
 
         h->houghBlockDim = dim3(32, 5, 5);
@@ -248,6 +258,7 @@ void destroyHandle(HoughTransformHandle *&handle, HoughStrategy houghStrategy) {
     if (houghStrategy == HoughStrategy::kCuda) {
         CudaHandle *h = (CudaHandle *) handle;
 
+        // buffers
         for (int dev = 0; dev < h->nDevs; dev++) {
             cudaFree(h->d_lines[dev]);
             cudaFree(h->d_lineCounter[dev]);
@@ -261,6 +272,13 @@ void destroyHandle(HoughTransformHandle *&handle, HoughStrategy houghStrategy) {
         delete[] h->d_accumulator;
 
         cudaFreeHost(h->lines);
+
+        // nccl
+        if (h->splitStrategy != SplitStrategy::kNone) {
+            for (int i = 0; i < h->nDevs; i++) ncclCommDestroy(h->comms[i]);
+            delete[] h->comms;
+            delete[] h->devs;
+        }
     } else if (houghStrategy == HoughStrategy::kSeq) {
         SeqHandle *h = (SeqHandle *) handle;
         delete[] h->accumulator;

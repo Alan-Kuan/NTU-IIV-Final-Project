@@ -4,6 +4,7 @@
 #include <vector>
 
 #include <cuda_runtime.h>
+#include <nccl.h>
 #include <opencv2/core.hpp>
 
 #include "Line.hpp"
@@ -43,15 +44,22 @@ struct SeqHandle: HoughTransformHandle {
  * well as device only needs to be allocated only once for all frames.
  */
 struct CudaHandle: HoughTransformHandle {
-    int nDevs;
     int frameSize;
+    SplitStrategy splitStrategy;
+
+    // buffers
     int *lines;
     int **d_lines;
     int lineCounter;
     int **d_lineCounter;
     uchar **d_frame;
     int **d_accumulator;
-    SplitStrategy splitStrategy;
+
+    // nccl
+    ncclComm_t *comms;
+    int nDevs;
+    int *devs;
+
     dim3 houghBlockDim;
     dim3 houghGridDim;
     dim3 findLinesBlockDim;
