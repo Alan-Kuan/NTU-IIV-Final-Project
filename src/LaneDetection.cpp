@@ -68,9 +68,10 @@ void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo, int h
 
     int frameWidth = inputVideo.get(cv::CAP_PROP_FRAME_WIDTH);
     int frameHeight = inputVideo.get(cv::CAP_PROP_FRAME_HEIGHT);
+    int nDevs = 2;
 
     HoughTransformHandle *handle;
-    createHandle(handle, houghStrategy, frameWidth, frameHeight);
+    createHandle(handle, houghStrategy, frameWidth, frameHeight, nDevs);
 
 	for( ; ; ) {
         // Read next frame

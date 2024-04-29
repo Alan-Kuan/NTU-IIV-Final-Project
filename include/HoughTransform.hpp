@@ -37,13 +37,14 @@ struct SeqHandle: HoughTransformHandle {
  * well as device only needs to be allocated only once for all frames.
  */
 struct CudaHandle: HoughTransformHandle {
+    int nDevs;
     int frameSize;
     int *lines;
-    int *d_lines;
+    int **d_lines;
     int lineCounter;
-    int *d_lineCounter;
-    uchar *d_frame;
-    int *d_accumulator;
+    int **d_lineCounter;
+    uchar **d_frame;
+    int **d_accumulator;
     dim3 houghBlockDim;
     dim3 houghGridDim;
     dim3 findLinesBlockDim;
@@ -55,8 +56,9 @@ struct CudaHandle: HoughTransformHandle {
  * 
  * @param handle Handle to be initialized
  * @param houghStrategy Strategy used to perform hough transform
+ * @param nDevs Number of GPU devices
  */
-void createHandle(HoughTransformHandle *&handle, int houghStrategy, int frameWidth, int frameHeight);
+void createHandle(HoughTransformHandle *&handle, int houghStrategy, int frameWidth, int frameHeight, int nDevs);
 
 /**
  * Frees memory on host and device that was allocated for the handle

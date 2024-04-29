@@ -5,6 +5,8 @@
 #include <iostream>
 #include <vector>
 
+#include "nccl.h"
+
 #define THETA_STEP_SIZE 0.1
 #define RHO_STEP_SIZE 2
 #define THRESHOLD 125
@@ -163,23 +165,23 @@ __global__ void findLinesKernel(int nRows, int nCols, int *accumulator, int *lin
 void houghTransformCuda(HoughTransformHandle *handle, cv::Mat frame, std::vector<Line> &lines) {
     CudaHandle *h = (CudaHandle *) handle;
 
-    cudaMemcpy(h->d_frame, frame.ptr(), h->frameSize, cudaMemcpyHostToDevice);
-    cudaMemset(h->d_accumulator, 0, h->nRows * h->nCols * sizeof(int));
+    cudaMemcpy(h->d_frame[0], frame.ptr(), h->frameSize, cudaMemcpyHostToDevice);
+    cudaMemset(h->d_accumulator[0], 0, h->nRows * h->nCols * sizeof(int));
 
-    houghKernel<<<h->houghGridDim, h->houghBlockDim>>>(frame.cols, frame.rows, h->d_frame, h->nRows, h->nCols, h->d_accumulator);
+    houghKernel<<<h->houghGridDim, h->houghBlockDim>>>(frame.cols, frame.rows, h->d_frame[0], h->nRows, h->nCols, h->d_accumulator[0]);
     cudaDeviceSynchronize();
 
     cudaError err = cudaGetLastError();
     if (err != cudaSuccess)
         std::cerr << "Error: " << cudaGetErrorString(err) << std::endl;
 
-    cudaMemset(h->d_lineCounter, 0, sizeof(int));
+    cudaMemset(h->d_lineCounter[0], 0, sizeof(int));
     findLinesKernel<<<h->findLinesGridDim, h->findLinesBlockDim>>>(h->nRows, h->nCols,
-        h->d_accumulator, h->d_lines, h->d_lineCounter);
+        h->d_accumulator[0], h->d_lines[0], h->d_lineCounter[0]);
     cudaDeviceSynchronize();
 
-    cudaMemcpy(&h->lineCounter, h->d_lineCounter, sizeof(int), cudaMemcpyDeviceToHost);
-    cudaMemcpy(h->lines, h->d_lines, 2 * MAX_NUM_LINES * sizeof(int), cudaMemcpyDeviceToHost);
+    cudaMemcpy(&h->lineCounter, h->d_lineCounter[0], sizeof(int), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h->lines, h->d_lines[0], 2 * MAX_NUM_LINES * sizeof(int), cudaMemcpyDeviceToHost);
 
     for (int i = 0; i < h->lineCounter - 1; i += 2) {
         lines.push_back(Line(h->lines[i], h->lines[i + 1]));
@@ -191,21 +193,32 @@ void houghTransformCuda(HoughTransformHandle *handle, cv::Mat frame, std::vector
  *
  * @param handle Handle to be initialized
  * @param houghStrategy Strategy used to perform hough transform
+ * @param nDevs Number of GPU devices
  */
-void createHandle(HoughTransformHandle *&handle, int houghStrategy, int frameWidth, int frameHeight) {
+void createHandle(HoughTransformHandle *&handle, int houghStrategy, int frameWidth, int frameHeight, int nDevs) {
     int nRows = (int) ceil(sqrt(frameHeight * frameHeight + frameWidth * frameWidth)) * 2 / RHO_STEP_SIZE;
     int nCols = (THETA_B -THETA_A + (2*THETA_VARIATION)) / THETA_STEP_SIZE;
 
     if (houghStrategy == CUDA) {
         CudaHandle *h = new CudaHandle();
-        h->frameSize = frameWidth * frameHeight * sizeof(uchar);
+        h->nDevs = nDevs;
+        // FIX: we assume device number divides global frame size
+        h->frameSize = frameWidth * frameHeight * sizeof(uchar) / nDevs;
         cudaMallocHost(&(h->lines), 2 * MAX_NUM_LINES * sizeof(int));
         h->lineCounter = 0;
 
-        cudaMalloc(&h->d_lines, 2 * MAX_NUM_LINES * sizeof(int));
-        cudaMalloc(&h->d_lineCounter, sizeof(int));
-        cudaMalloc(&h->d_frame, h->frameSize);
-        cudaMalloc(&h->d_accumulator, nRows * nCols * sizeof(int));
+        h->d_lines = new int *[nDevs];
+        h->d_lineCounter = new int *[nDevs];
+        h->d_frame = new uchar *[nDevs];
+        h->d_accumulator = new int *[nDevs];
+
+        for (int dev = 0; dev < nDevs; dev++) {
+            cudaSetDevice(dev);
+            cudaMalloc(h->d_lines + dev, 2 * MAX_NUM_LINES * sizeof(int));
+            cudaMalloc(h->d_lineCounter + dev, sizeof(int));
+            cudaMalloc(h->d_frame + dev, h->frameSize);
+            cudaMalloc(h->d_accumulator + dev, nRows * nCols * sizeof(int));
+        }
 
         h->houghBlockDim = dim3(32, 5, 5);
         h->houghGridDim = dim3(ceil(frameHeight / 5), ceil(frameWidth / 5));
@@ -233,10 +246,17 @@ void destroyHandle(HoughTransformHandle *&handle, int houghStrategy) {
     if (houghStrategy == CUDA) {
         CudaHandle *h = (CudaHandle *) handle;
 
-        cudaFree(h->d_lines);
-        cudaFree(h->d_lineCounter);
-        cudaFree(h->d_frame);
-        cudaFree(h->d_accumulator);
+        for (int dev = 0; dev < h->nDevs; dev++) {
+            cudaFree(h->d_lines[dev]);
+            cudaFree(h->d_lineCounter[dev]);
+            cudaFree(h->d_frame[dev]);
+            cudaFree(h->d_accumulator[dev]);
+        }
+
+        delete[] h->d_lines;
+        delete[] h->d_lineCounter;
+        delete[] h->d_frame;
+        delete[] h->d_accumulator;
 
         cudaFreeHost(h->lines);
     } else if (houghStrategy == SEQUENTIAL) {
