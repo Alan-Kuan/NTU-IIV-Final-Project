@@ -195,7 +195,8 @@ void houghTransformCuda(HoughTransformHandle *handle, cv::Mat frame, std::vector
  * @param houghStrategy Strategy used to perform hough transform
  * @param nDevs Number of GPU devices
  */
-void createHandle(HoughTransformHandle *&handle, HoughStrategy houghStrategy, int frameWidth, int frameHeight, int nDevs) {
+void createHandle(HoughTransformHandle *&handle, int frameWidth, int frameHeight,
+        HoughStrategy houghStrategy, SplitStrategy splitStrategy, int nDevs) {
     int nRows = (int) ceil(sqrt(frameHeight * frameHeight + frameWidth * frameWidth)) * 2 / RHO_STEP_SIZE;
     int nCols = (THETA_B -THETA_A + (2*THETA_VARIATION)) / THETA_STEP_SIZE;
 
@@ -204,6 +205,7 @@ void createHandle(HoughTransformHandle *&handle, HoughStrategy houghStrategy, in
         h->nDevs = nDevs;
         // FIX: we assume device number divides global frame size
         h->frameSize = frameWidth * frameHeight * sizeof(uchar) / nDevs;
+        h->splitStrategy = splitStrategy;
         cudaMallocHost(&(h->lines), 2 * MAX_NUM_LINES * sizeof(int));
         h->lineCounter = 0;
 

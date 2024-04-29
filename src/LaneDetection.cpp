@@ -14,7 +14,8 @@
 #include "Preprocessing.hpp"
 
 void showUsage(const char *arg0);
-void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo, HoughStrategy houghStrategy, int nDevs);
+void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo,
+    HoughStrategy houghStrategy, SplitStrategy splitStrategy, int nDevs);
 void drawLines(cv::Mat &frame, std::vector<Line> lines);
 cv::Mat plotAccumulator(int nRows, int nCols, int *accumulator);
 
@@ -28,22 +29,29 @@ int main(int argc, char *argv[]) {
     }
 
     HoughStrategy houghStrategy = kCuda;
+    SplitStrategy splitStrategy = kNone;
     int nDevs = 1;
 
     struct option opts[] = {
-        { "seq", 0, (int *) &houghStrategy, HoughStrategy::kSeq },
-        { "nd", 1, 0, 0 },
+        { "seq", no_argument, (int *) &houghStrategy, HoughStrategy::kSeq },
+        { "ss", optional_argument, 0, 0 },
+        { "nd", optional_argument, 0, 0 },
         { nullptr, 0, nullptr, 0 },
     };
     int optIdx;
     int val;
 
     while ((val = getopt_long_only(argc, argv, "", opts, &optIdx)) != -1) {
-        switch (val) {
-        case 0:
-            if (optIdx == 1) nDevs = strtol(optarg, nullptr, 10);
-            break;
-        case '?':
+        if (val == 0) {
+            switch (optIdx) {
+            case 1:
+                splitStrategy = (SplitStrategy) strtol(optarg, nullptr, 10);
+                break;
+            case 2:
+                nDevs = strtol(optarg, nullptr, 10);
+                break;
+            }
+        } else if (val == '?') {
             showUsage(argv[0]);
             return 1;
         }
@@ -65,7 +73,7 @@ int main(int argc, char *argv[]) {
     cv::VideoWriter video(videoOutput, cv::VideoWriter::fourcc('M','J','P','G'), 30,
         cv::Size(frameWidth, frameHeight), true);
 
-    detectLanes(capture, video, houghStrategy, nDevs);
+    detectLanes(capture, video, houghStrategy, splitStrategy, nDevs);
 
     return 0;
 }
@@ -76,6 +84,12 @@ void showUsage(const char *arg0) {
     std::cout << " outputVideo   Name of resulting output video" << std::endl << std::endl;
     std::cout << "Options:" << std::endl;
     std::cout << " --seq         Perform hough transform sequentially on the CPU (if omitted, CUDA is used)" << std::endl;
+    std::cout << " --ss <num>    How to split the frame (default: 0, should no be used when --nd=1)" << std::endl;
+    std::cout << "   0           no split" << std::endl;
+    std::cout << "   1           left half & right half" << std::endl;
+    std::cout << "   2           top half & bottom half" << std::endl;
+    std::cout << "   3           cyclic split from left to right" << std::endl;
+    std::cout << "   4           cyclic split from top to bottom" << std::endl;
     std::cout << " --nd <num>    Number of GPU devices (default: 1)" << std::endl;
 }
 
@@ -88,7 +102,8 @@ void showUsage(const char *arg0) {
  * @param houghStrategy Strategy which should be used to parform hough transform
  * @param nDevs Number of GPU devices
  */
-void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo, HoughStrategy houghStrategy, int nDevs) {
+void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo,
+        HoughStrategy houghStrategy, SplitStrategy splitStrategy, int nDevs) {
     cv::Mat frame, preProcFrame;
     std::vector<Line> lines;
 
@@ -105,7 +120,7 @@ void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo, Hough
     int frameHeight = inputVideo.get(cv::CAP_PROP_FRAME_HEIGHT);
 
     HoughTransformHandle *handle;
-    createHandle(handle, houghStrategy, frameWidth, frameHeight, nDevs);
+    createHandle(handle, frameWidth, frameHeight, houghStrategy, splitStrategy, nDevs);
 
 	for( ; ; ) {
         // Read next frame

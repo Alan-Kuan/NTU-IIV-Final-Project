@@ -9,6 +9,13 @@
 #include "Line.hpp"
 
 enum HoughStrategy { kSeq, kCuda };
+enum SplitStrategy {
+    kNone,
+    kLeftRight,
+    kTopBootom,
+    kLeftRightCyclic,
+    kTopBootomCyclic,
+};
 
 /** 
  * Handle which tracks info that is required for every execution of hough 
@@ -44,6 +51,7 @@ struct CudaHandle: HoughTransformHandle {
     int **d_lineCounter;
     uchar **d_frame;
     int **d_accumulator;
+    SplitStrategy splitStrategy;
     dim3 houghBlockDim;
     dim3 houghGridDim;
     dim3 findLinesBlockDim;
@@ -55,9 +63,11 @@ struct CudaHandle: HoughTransformHandle {
  * 
  * @param handle Handle to be initialized
  * @param houghStrategy Strategy used to perform hough transform
+ * @param splitStrategy
  * @param nDevs Number of GPU devices
  */
-void createHandle(HoughTransformHandle *&handle, HoughStrategy houghStrategy, int frameWidth, int frameHeight, int nDevs);
+void createHandle(HoughTransformHandle *&handle, int frameWidth, int frameHeight,
+    HoughStrategy houghStrategy, SplitStrategy splitStrategy, int nDevs);
 
 /**
  * Frees memory on host and device that was allocated for the handle
