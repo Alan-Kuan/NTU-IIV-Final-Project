@@ -195,11 +195,11 @@ void houghTransformCuda(HoughTransformHandle *handle, cv::Mat frame, std::vector
  * @param houghStrategy Strategy used to perform hough transform
  * @param nDevs Number of GPU devices
  */
-void createHandle(HoughTransformHandle *&handle, int houghStrategy, int frameWidth, int frameHeight, int nDevs) {
+void createHandle(HoughTransformHandle *&handle, HoughStrategy houghStrategy, int frameWidth, int frameHeight, int nDevs) {
     int nRows = (int) ceil(sqrt(frameHeight * frameHeight + frameWidth * frameWidth)) * 2 / RHO_STEP_SIZE;
     int nCols = (THETA_B -THETA_A + (2*THETA_VARIATION)) / THETA_STEP_SIZE;
 
-    if (houghStrategy == CUDA) {
+    if (houghStrategy == HoughStrategy::kCuda) {
         CudaHandle *h = new CudaHandle();
         h->nDevs = nDevs;
         // FIX: we assume device number divides global frame size
@@ -226,7 +226,7 @@ void createHandle(HoughTransformHandle *&handle, int houghStrategy, int frameWid
         h->findLinesGridDim = dim3(ceil(nRows / 32), ceil(nCols / 32));
 
         handle = (HoughTransformHandle *) h;
-    } else if (houghStrategy == SEQUENTIAL) {
+    } else if (houghStrategy == HoughStrategy::kSeq) {
         SeqHandle *h =  new SeqHandle();
         h->accumulator = new int[nRows * nCols];
         handle = (HoughTransformHandle *) h;
@@ -242,8 +242,8 @@ void createHandle(HoughTransformHandle *&handle, int houghStrategy, int frameWid
  * @param handle Handle to be destroyed
  * @param houghStrategy Hough strategy that was used to create the handle
  */
-void destroyHandle(HoughTransformHandle *&handle, int houghStrategy) {
-    if (houghStrategy == CUDA) {
+void destroyHandle(HoughTransformHandle *&handle, HoughStrategy houghStrategy) {
+    if (houghStrategy == HoughStrategy::kCuda) {
         CudaHandle *h = (CudaHandle *) handle;
 
         for (int dev = 0; dev < h->nDevs; dev++) {
@@ -259,7 +259,7 @@ void destroyHandle(HoughTransformHandle *&handle, int houghStrategy) {
         delete[] h->d_accumulator;
 
         cudaFreeHost(h->lines);
-    } else if (houghStrategy == SEQUENTIAL) {
+    } else if (houghStrategy == HoughStrategy::kSeq) {
         SeqHandle *h = (SeqHandle *) handle;
         delete[] h->accumulator;
     }
