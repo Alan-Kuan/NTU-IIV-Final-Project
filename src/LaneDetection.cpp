@@ -1,3 +1,6 @@
+#include <getopt.h>
+#include <unistd.h>
+
 #include <ctime>
 #include <iomanip>
 #include <iostream>
@@ -9,40 +12,63 @@
 #include "Line.hpp"
 #include "Preprocessing.hpp"
 
+void showUsage(const char* arg0);
 extern void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo, HoughStrategy houghStrategy);
 extern void drawLines(cv::Mat &frame, std::vector<Line> lines);
 extern cv::Mat plotAccumulator(int nRows, int nCols, int *accumulator);
 
+extern int optind;
+
 int main(int argc, char *argv[]) {
     if (argc < 3) {
-        std::cout << "usage LaneDetection inputVideo outputVideo [--cuda|--seq]" << std::endl << std::endl;
-        std::cout << "Positional Arguments:" << std::endl;
-        std::cout << " inputVideo    Input video for which lanes are detected" << std::endl;
-        std::cout << " outputVideo   Name of resulting output video" << std::endl << std::endl;
-        std::cout << "Optional Arguments:" << std::endl;
-        std::cout << " --cuda        Perform hough transform using CUDA (default)" << std::endl;
-        std::cout << " --seq         Perform hough transform sequentially on the CPU" << std::endl;
+        showUsage(argv[0]);
         return 1;
     }
 
+    HoughStrategy houghStrategy = kCuda;
+
+    struct option opts[] = {
+        { "seq", 0, (int *) &houghStrategy, HoughStrategy::kSeq },
+        { nullptr, 0, nullptr, 0 },
+    };
+    int optIdx;
+    int val;
+
+    while ((val = getopt_long_only(argc, argv, "", opts, &optIdx)) != -1) {
+        if (val == '?') {
+            showUsage(argv[0]);
+            return 1;
+        }
+    }
+
+    const char* videoInput = argv[optind];
+    const char* videoOutput = argv[optind + 1];
+
     // Read input video
-    cv::VideoCapture capture(argv[1]);
-    // Check which strategy to use for hough transform (CUDA or sequential)
-    HoughStrategy houghStrategy = argc > 3 && !strcmp(argv[3], "--seq") ? kSeq : kCuda;
+    cv::VideoCapture capture(videoInput);
     int frameWidth = capture.get(cv::CAP_PROP_FRAME_WIDTH);
     int frameHeight = capture.get(cv::CAP_PROP_FRAME_HEIGHT);
 
     if (!capture.isOpened()) {
-        std::cout << "Unable to open video" << std::endl;
+        std::cerr << "Unable to open video" << std::endl;
         return -1;
     }
 
-    cv::VideoWriter video(argv[2], cv::VideoWriter::fourcc('M','J','P','G'), 30,
+    cv::VideoWriter video(videoOutput, cv::VideoWriter::fourcc('M','J','P','G'), 30,
         cv::Size(frameWidth, frameHeight), true);
 
     detectLanes(capture, video, houghStrategy);
 
     return 0;
+}
+
+void showUsage(const char* arg0) {
+    std::cout << "Usage: " << arg0 << " inputVideo outputVideo [--seq]" << std::endl << std::endl;
+    std::cout << "Positional Arguments:" << std::endl;
+    std::cout << " inputVideo    Input video for which lanes are detected" << std::endl;
+    std::cout << " outputVideo   Name of resulting output video" << std::endl << std::endl;
+    std::cout << "Optional Arguments:" << std::endl;
+    std::cout << " --seq         Perform hough transform sequentially on the CPU (if omitted, CUDA is used)" << std::endl;
 }
 
 /**
