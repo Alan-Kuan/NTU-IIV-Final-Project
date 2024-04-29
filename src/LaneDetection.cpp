@@ -9,7 +9,7 @@
 #include "Line.hpp"
 #include "Preprocessing.hpp"
 
-extern void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo, int houghStrategy);
+extern void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo, HoughStrategy houghStrategy);
 extern void drawLines(cv::Mat &frame, std::vector<Line> lines);
 extern cv::Mat plotAccumulator(int nRows, int nCols, int *accumulator);
 
@@ -28,7 +28,7 @@ int main(int argc, char *argv[]) {
     // Read input video
     cv::VideoCapture capture(argv[1]);
     // Check which strategy to use for hough transform (CUDA or sequential)
-    int houghStrategy = argc > 3 && !strcmp(argv[3], "--seq") ? SEQUENTIAL : CUDA;
+    HoughStrategy houghStrategy = argc > 3 && !strcmp(argv[3], "--seq") ? kSeq : kCuda;
     int frameWidth = capture.get(cv::CAP_PROP_FRAME_WIDTH);
     int frameHeight = capture.get(cv::CAP_PROP_FRAME_HEIGHT);
 
@@ -53,7 +53,7 @@ int main(int argc, char *argv[]) {
  * @param outputVideo Video where results are written to
  * @param houghStrategy Strategy which should be used to parform hough transform
  */
-void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo, int houghStrategy) {
+void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo, HoughStrategy houghStrategy) {
     cv::Mat frame, preProcFrame;
     std::vector<Line> lines;
 
@@ -63,7 +63,7 @@ void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo, int h
 	clock_t writeTime = 0;
     clock_t totalTime = 0;
 
-    std::cout << "Processing video " << (houghStrategy == CUDA ? "using CUDA" : "Sequentially") << std::endl;
+    std::cout << "Processing video " << (houghStrategy == HoughStrategy::kCuda ? "using CUDA" : "Sequentially") << std::endl;
     totalTime -= clock();
 
     int frameWidth = inputVideo.get(cv::CAP_PROP_FRAME_WIDTH);
@@ -91,9 +91,9 @@ void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo, int h
         // Perform hough transform
         houghTime -= clock();
         lines.clear();
-        if (houghStrategy == CUDA)
+        if (houghStrategy == HoughStrategy::kCuda)
             houghTransformCuda(handle, preProcFrame, lines);
-        else if (houghStrategy == SEQUENTIAL)
+        else if (houghStrategy == HoughStrategy::kSeq)
             houghTransformSeq(handle, preProcFrame, lines);
         houghTime += clock();
 

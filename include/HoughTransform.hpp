@@ -8,8 +8,7 @@
 
 #include "Line.hpp"
 
-#define CUDA 1
-#define SEQUENTIAL 2
+enum HoughStrategy { kSeq, kCuda };
 
 /** 
  * Handle which tracks info that is required for every execution of hough 
@@ -56,7 +55,7 @@ struct CudaHandle: HoughTransformHandle {
  * @param handle Handle to be initialized
  * @param houghStrategy Strategy used to perform hough transform
  */
-void createHandle(HoughTransformHandle *&handle, int houghStrategy, int frameWidth, int frameHeight);
+void createHandle(HoughTransformHandle *&handle, HoughStrategy houghStrategy, int frameWidth, int frameHeight);
 
 /**
  * Frees memory on host and device that was allocated for the handle
@@ -64,7 +63,7 @@ void createHandle(HoughTransformHandle *&handle, int houghStrategy, int frameWid
  * @param handle Handle to be destroyed
  * @param houghStrategy Hough strategy that was used to create the handle
  */
-void destroyHandle(HoughTransformHandle *&handle, int houghStrategy);
+void destroyHandle(HoughTransformHandle *&handle, HoughStrategy houghStrategy);
 
 /**
  * Performs hough transform for given frame sequentially and adds found lines
