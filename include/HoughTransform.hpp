@@ -5,6 +5,7 @@
 
 #include <cuda_runtime.h>
 #include <opencv2/core.hpp>
+#include <nccl.h>
 
 #include "Line.hpp"
 

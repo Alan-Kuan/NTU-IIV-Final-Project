@@ -114,18 +114,18 @@ void houghTransformSeq(HoughTransformHandle *handle, cv::Mat frame, std::vector<
  * CUDA kernel responsible for trying all different rho/theta combinations for
  * non-zero pixels and adding votes to accumulator
  */
-__global__ void houghKernel(int frameWidth, int frameHeight, unsigned char* frame, int nRows, int nCols, int *accumulator) {
-    int i = blockIdx.x * blockDim.y + threadIdx.y;
-    int j = blockIdx.y * blockDim.z + threadIdx.z;
+__global__ void houghKernel(int frameWidth, int frameHeight, unsigned char* frame, int nRows, int nCols, int *accumulator, const int devIdx) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    int j = blockIdx.y * blockDim.y + threadIdx.y;
     double theta;
     int rho;
 
-    if(i < frameHeight && j < frameWidth && ((int) frame[(i * frameWidth) + j]) != 0) {
+    if(i < frameHeight && j < frameWidth && ((int) frame[(i * frameWidth) + j]) != 0 && blockIdx.y % 2 == devIdx) {
 
         // thetas of interest will be close to 45 and close to 135 (vertical lines)
         // we are doing 2 thetas at a time, 1 for each theta of Interest
         // we use thetas varying 15 degrees more and less
-        for(int k = threadIdx.x * (1 / THETA_STEP_SIZE); k < (threadIdx.x + 1) * (1 / THETA_STEP_SIZE); k++) {
+        for(int k = threadIdx.z * (1 / THETA_STEP_SIZE); k < (threadIdx.z + 1) * (1 / THETA_STEP_SIZE); k++) {
             theta = THETA_A-THETA_VARIATION + ((double)k*THETA_STEP_SIZE);
             rho = calcRho(j, i, theta);
             atomicAdd(&accumulator[index(nRows, nCols, rho, theta)], 1);
@@ -165,12 +165,18 @@ __global__ void findLinesKernel(int nRows, int nCols, int *accumulator, int *lin
 void houghTransformCuda(HoughTransformHandle *handle, cv::Mat frame, std::vector<Line> &lines) {
     CudaHandle *h = (CudaHandle *) handle;
 
-    cudaMemcpy(h->d_frame[0], frame.ptr(), h->frameSize, cudaMemcpyHostToDevice);
-    cudaMemset(h->d_accumulator[0], 0, h->nRows * h->nCols * sizeof(int));
+    for (int dev = 0; dev < h->nDevs; dev++) {
+        cudaSetDevice(dev);
+        cudaMemcpy(h->d_frame[dev], frame.ptr(), h->frameSize, cudaMemcpyHostToDevice);
+        cudaMemset(h->d_accumulator[dev], 0, h->nRows * h->nCols * sizeof(int));
+    }
 
-    houghKernel<<<h->houghGridDim, h->houghBlockDim>>>(frame.cols, frame.rows, h->d_frame[0], h->nRows, h->nCols, h->d_accumulator[0]);
-    cudaDeviceSynchronize();
-
+    for (int dev = 0; dev < h->nDevs; dev++) {
+        cudaSetDevice(dev);
+        houghKernel<<<h->houghGridDim, h->houghBlockDim>>>(frame.cols, frame.rows, h->d_frame[dev], h->nRows, h->nCols, h->d_accumulator[dev], dev);    
+        cudaDeviceSynchronize();
+    }
+    
     cudaError err = cudaGetLastError();
     if (err != cudaSuccess)
         std::cerr << "Error: " << cudaGetErrorString(err) << std::endl;
