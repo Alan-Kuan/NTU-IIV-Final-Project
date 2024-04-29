@@ -13,9 +13,9 @@
 #include "Preprocessing.hpp"
 
 void showUsage(const char* arg0);
-extern void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo, HoughStrategy houghStrategy);
-extern void drawLines(cv::Mat &frame, std::vector<Line> lines);
-extern cv::Mat plotAccumulator(int nRows, int nCols, int *accumulator);
+void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo, HoughStrategy houghStrategy);
+void drawLines(cv::Mat &frame, std::vector<Line> lines);
+cv::Mat plotAccumulator(int nRows, int nCols, int *accumulator);
 
 extern int optind;
 
