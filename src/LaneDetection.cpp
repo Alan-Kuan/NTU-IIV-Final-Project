@@ -1,6 +1,7 @@
 #include <getopt.h>
 #include <unistd.h>
 
+#include <cstdlib>
 #include <ctime>
 #include <iomanip>
 #include <iostream>
@@ -12,11 +13,12 @@
 #include "Line.hpp"
 #include "Preprocessing.hpp"
 
-void showUsage(const char* arg0);
-void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo, HoughStrategy houghStrategy);
+void showUsage(const char *arg0);
+void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo, HoughStrategy houghStrategy, int nDevs);
 void drawLines(cv::Mat &frame, std::vector<Line> lines);
 cv::Mat plotAccumulator(int nRows, int nCols, int *accumulator);
 
+extern char *optarg;
 extern int optind;
 
 int main(int argc, char *argv[]) {
@@ -26,16 +28,22 @@ int main(int argc, char *argv[]) {
     }
 
     HoughStrategy houghStrategy = kCuda;
+    int nDevs = 1;
 
     struct option opts[] = {
         { "seq", 0, (int *) &houghStrategy, HoughStrategy::kSeq },
+        { "nd", 1, 0, 0 },
         { nullptr, 0, nullptr, 0 },
     };
     int optIdx;
     int val;
 
     while ((val = getopt_long_only(argc, argv, "", opts, &optIdx)) != -1) {
-        if (val == '?') {
+        switch (val) {
+        case 0:
+            if (optIdx == 1) nDevs = strtol(optarg, nullptr, 10);
+            break;
+        case '?':
             showUsage(argv[0]);
             return 1;
         }
@@ -57,18 +65,18 @@ int main(int argc, char *argv[]) {
     cv::VideoWriter video(videoOutput, cv::VideoWriter::fourcc('M','J','P','G'), 30,
         cv::Size(frameWidth, frameHeight), true);
 
-    detectLanes(capture, video, houghStrategy);
+    detectLanes(capture, video, houghStrategy, nDevs);
 
     return 0;
 }
 
-void showUsage(const char* arg0) {
-    std::cout << "Usage: " << arg0 << " inputVideo outputVideo [--seq]" << std::endl << std::endl;
-    std::cout << "Positional Arguments:" << std::endl;
+void showUsage(const char *arg0) {
+    std::cout << "Usage: " << arg0 << " inputVideo outputVideo [options]" << std::endl << std::endl;
     std::cout << " inputVideo    Input video for which lanes are detected" << std::endl;
     std::cout << " outputVideo   Name of resulting output video" << std::endl << std::endl;
-    std::cout << "Optional Arguments:" << std::endl;
+    std::cout << "Options:" << std::endl;
     std::cout << " --seq         Perform hough transform sequentially on the CPU (if omitted, CUDA is used)" << std::endl;
+    std::cout << " --nd <num>    Number of GPU devices (default: 1)" << std::endl;
 }
 
 /**
@@ -78,8 +86,9 @@ void showUsage(const char* arg0) {
  * @param inputVideo Video for which lanes are detected
  * @param outputVideo Video where results are written to
  * @param houghStrategy Strategy which should be used to parform hough transform
+ * @param nDevs Number of GPU devices
  */
-void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo, HoughStrategy houghStrategy) {
+void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo, HoughStrategy houghStrategy, int nDevs) {
     cv::Mat frame, preProcFrame;
     std::vector<Line> lines;
 
@@ -94,7 +103,6 @@ void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo, Hough
 
     int frameWidth = inputVideo.get(cv::CAP_PROP_FRAME_WIDTH);
     int frameHeight = inputVideo.get(cv::CAP_PROP_FRAME_HEIGHT);
-    int nDevs = 2;
 
     HoughTransformHandle *handle;
     createHandle(handle, houghStrategy, frameWidth, frameHeight, nDevs);
