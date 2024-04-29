@@ -5,7 +5,7 @@
 #include <iostream>
 #include <vector>
 
-#include "nccl.h"
+#include <nccl.h>
 
 #define THETA_STEP_SIZE 0.1
 #define RHO_STEP_SIZE 2
@@ -201,15 +201,18 @@ void houghTransformCuda(HoughTransformHandle *handle, cv::Mat frame, std::vector
  * @param houghStrategy Strategy used to perform hough transform
  * @param nDevs Number of GPU devices
  */
-void createHandle(HoughTransformHandle *&handle, int houghStrategy, int frameWidth, int frameHeight, int nDevs) {
+void createHandle(HoughTransformHandle *&handle, int frameWidth, int frameHeight,
+        HoughStrategy houghStrategy, SplitStrategy splitStrategy, int nDevs) {
     int nRows = (int) ceil(sqrt(frameHeight * frameHeight + frameWidth * frameWidth)) * 2 / RHO_STEP_SIZE;
     int nCols = (THETA_B -THETA_A + (2*THETA_VARIATION)) / THETA_STEP_SIZE;
 
-    if (houghStrategy == CUDA) {
+    if (houghStrategy == HoughStrategy::kCuda) {
         CudaHandle *h = new CudaHandle();
-        h->nDevs = nDevs;
         // FIX: we assume device number divides global frame size
         h->frameSize = frameWidth * frameHeight * sizeof(uchar) / nDevs;
+        h->splitStrategy = splitStrategy;
+
+        // buffers
         cudaMallocHost(&(h->lines), 2 * MAX_NUM_LINES * sizeof(int));
         h->lineCounter = 0;
 
@@ -226,13 +229,22 @@ void createHandle(HoughTransformHandle *&handle, int houghStrategy, int frameWid
             cudaMalloc(h->d_accumulator + dev, nRows * nCols * sizeof(int));
         }
 
+        // nccl
+        if (splitStrategy != SplitStrategy::kNone) {
+            h->comms = new ncclComm_t[nDevs];
+            h->nDevs = nDevs;
+            h->devs = new int[nDevs];
+            for (int i = 0; i < nDevs; i++) h->devs[i] = i;
+            ncclCommInitAll(h->comms, nDevs, h->devs);
+        }
+
         h->houghBlockDim = dim3(32, 5, 5);
         h->houghGridDim = dim3(ceil(frameHeight / 5), ceil(frameWidth / 5));
         h->findLinesBlockDim = dim3(32, 32);
         h->findLinesGridDim = dim3(ceil(nRows / 32), ceil(nCols / 32));
 
         handle = (HoughTransformHandle *) h;
-    } else if (houghStrategy == SEQUENTIAL) {
+    } else if (houghStrategy == HoughStrategy::kSeq) {
         SeqHandle *h =  new SeqHandle();
         h->accumulator = new int[nRows * nCols];
         handle = (HoughTransformHandle *) h;
@@ -248,10 +260,11 @@ void createHandle(HoughTransformHandle *&handle, int houghStrategy, int frameWid
  * @param handle Handle to be destroyed
  * @param houghStrategy Hough strategy that was used to create the handle
  */
-void destroyHandle(HoughTransformHandle *&handle, int houghStrategy) {
-    if (houghStrategy == CUDA) {
+void destroyHandle(HoughTransformHandle *&handle, HoughStrategy houghStrategy) {
+    if (houghStrategy == HoughStrategy::kCuda) {
         CudaHandle *h = (CudaHandle *) handle;
 
+        // buffers
         for (int dev = 0; dev < h->nDevs; dev++) {
             cudaFree(h->d_lines[dev]);
             cudaFree(h->d_lineCounter[dev]);
@@ -265,7 +278,14 @@ void destroyHandle(HoughTransformHandle *&handle, int houghStrategy) {
         delete[] h->d_accumulator;
 
         cudaFreeHost(h->lines);
-    } else if (houghStrategy == SEQUENTIAL) {
+
+        // nccl
+        if (h->splitStrategy != SplitStrategy::kNone) {
+            for (int i = 0; i < h->nDevs; i++) ncclCommDestroy(h->comms[i]);
+            delete[] h->comms;
+            delete[] h->devs;
+        }
+    } else if (houghStrategy == HoughStrategy::kSeq) {
         SeqHandle *h = (SeqHandle *) handle;
         delete[] h->accumulator;
     }

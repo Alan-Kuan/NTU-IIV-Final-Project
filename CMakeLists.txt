@@ -18,7 +18,8 @@ set(CMAKE CXX_STANDARD_REQUIRED True)
 set(libs
     opencv_core
     opencv_imgproc
-    opencv_videoio)
+    opencv_videoio
+    nccl)
 
 set(EXECUTABLE_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/build)
 

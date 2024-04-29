@@ -4,13 +4,20 @@
 #include <vector>
 
 #include <cuda_runtime.h>
+#include <nccl.h>
 #include <opencv2/core.hpp>
 #include <nccl.h>
 
 #include "Line.hpp"
 
-#define CUDA 1
-#define SEQUENTIAL 2
+enum HoughStrategy { kSeq, kCuda };
+enum SplitStrategy {
+    kNone,
+    kLeftRight,
+    kTopBootom,
+    kLeftRightCyclic,
+    kTopBootomCyclic,
+};
 
 /** 
  * Handle which tracks info that is required for every execution of hough 
@@ -38,14 +45,22 @@ struct SeqHandle: HoughTransformHandle {
  * well as device only needs to be allocated only once for all frames.
  */
 struct CudaHandle: HoughTransformHandle {
-    int nDevs;
     int frameSize;
+    SplitStrategy splitStrategy;
+
+    // buffers
     int *lines;
     int **d_lines;
     int lineCounter;
     int **d_lineCounter;
     uchar **d_frame;
     int **d_accumulator;
+
+    // nccl
+    ncclComm_t *comms;
+    int nDevs;
+    int *devs;
+
     dim3 houghBlockDim;
     dim3 houghGridDim;
     dim3 findLinesBlockDim;
@@ -57,9 +72,11 @@ struct CudaHandle: HoughTransformHandle {
  * 
  * @param handle Handle to be initialized
  * @param houghStrategy Strategy used to perform hough transform
+ * @param splitStrategy
  * @param nDevs Number of GPU devices
  */
-void createHandle(HoughTransformHandle *&handle, int houghStrategy, int frameWidth, int frameHeight, int nDevs);
+void createHandle(HoughTransformHandle *&handle, int frameWidth, int frameHeight,
+    HoughStrategy houghStrategy, SplitStrategy splitStrategy, int nDevs);
 
 /**
  * Frees memory on host and device that was allocated for the handle
@@ -67,7 +84,7 @@ void createHandle(HoughTransformHandle *&handle, int houghStrategy, int frameWid
  * @param handle Handle to be destroyed
  * @param houghStrategy Hough strategy that was used to create the handle
  */
-void destroyHandle(HoughTransformHandle *&handle, int houghStrategy);
+void destroyHandle(HoughTransformHandle *&handle, HoughStrategy houghStrategy);
 
 /**
  * Performs hough transform for given frame sequentially and adds found lines

@@ -1,3 +1,7 @@
+#include <getopt.h>
+#include <unistd.h>
+
+#include <cstdlib>
 #include <ctime>
 #include <iomanip>
 #include <iostream>
@@ -9,40 +13,84 @@
 #include "Line.hpp"
 #include "Preprocessing.hpp"
 
-extern void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo, int houghStrategy);
-extern void drawLines(cv::Mat &frame, std::vector<Line> lines);
-extern cv::Mat plotAccumulator(int nRows, int nCols, int *accumulator);
+void showUsage(const char *arg0);
+void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo,
+    HoughStrategy houghStrategy, SplitStrategy splitStrategy, int nDevs);
+void drawLines(cv::Mat &frame, std::vector<Line> lines);
+cv::Mat plotAccumulator(int nRows, int nCols, int *accumulator);
+
+extern char *optarg;
+extern int optind;
 
 int main(int argc, char *argv[]) {
     if (argc < 3) {
-        std::cout << "usage LaneDetection inputVideo outputVideo [--cuda|--seq]" << std::endl << std::endl;
-        std::cout << "Positional Arguments:" << std::endl;
-        std::cout << " inputVideo    Input video for which lanes are detected" << std::endl;
-        std::cout << " outputVideo   Name of resulting output video" << std::endl << std::endl;
-        std::cout << "Optional Arguments:" << std::endl;
-        std::cout << " --cuda        Perform hough transform using CUDA (default)" << std::endl;
-        std::cout << " --seq         Perform hough transform sequentially on the CPU" << std::endl;
+        showUsage(argv[0]);
         return 1;
     }
 
+    HoughStrategy houghStrategy = kCuda;
+    SplitStrategy splitStrategy = kNone;
+    int nDevs = 1;
+
+    struct option opts[] = {
+        { "seq", no_argument, (int *) &houghStrategy, HoughStrategy::kSeq },
+        { "ss", optional_argument, 0, 0 },
+        { "nd", optional_argument, 0, 0 },
+        { nullptr, 0, nullptr, 0 },
+    };
+    int optIdx;
+    int val;
+
+    while ((val = getopt_long_only(argc, argv, "", opts, &optIdx)) != -1) {
+        if (val == 0) {
+            switch (optIdx) {
+            case 1:
+                splitStrategy = (SplitStrategy) strtol(optarg, nullptr, 10);
+                break;
+            case 2:
+                nDevs = strtol(optarg, nullptr, 10);
+                break;
+            }
+        } else if (val == '?') {
+            showUsage(argv[0]);
+            return 1;
+        }
+    }
+
+    const char* videoInput = argv[optind];
+    const char* videoOutput = argv[optind + 1];
+
     // Read input video
-    cv::VideoCapture capture(argv[1]);
-    // Check which strategy to use for hough transform (CUDA or sequential)
-    int houghStrategy = argc > 3 && !strcmp(argv[3], "--seq") ? SEQUENTIAL : CUDA;
+    cv::VideoCapture capture(videoInput);
     int frameWidth = capture.get(cv::CAP_PROP_FRAME_WIDTH);
     int frameHeight = capture.get(cv::CAP_PROP_FRAME_HEIGHT);
 
     if (!capture.isOpened()) {
-        std::cout << "Unable to open video" << std::endl;
+        std::cerr << "Unable to open video" << std::endl;
         return -1;
     }
 
-    cv::VideoWriter video(argv[2], cv::VideoWriter::fourcc('M','J','P','G'), 30,
+    cv::VideoWriter video(videoOutput, cv::VideoWriter::fourcc('M','J','P','G'), 30,
         cv::Size(frameWidth, frameHeight), true);
 
-    detectLanes(capture, video, houghStrategy);
+    detectLanes(capture, video, houghStrategy, splitStrategy, nDevs);
 
     return 0;
+}
+
+void showUsage(const char *arg0) {
+    std::cout << "Usage: " << arg0 << " inputVideo outputVideo [options]" << std::endl << std::endl;
+    std::cout << " inputVideo    Input video for which lanes are detected" << std::endl;
+    std::cout << " outputVideo   Name of resulting output video" << std::endl << std::endl;
+    std::cout << "Options:" << std::endl;
+    std::cout << " --seq         Perform hough transform sequentially on the CPU (if omitted, CUDA is used)" << std::endl;
+    std::cout << " --ss <num>    How to split the frame (default: 0, should no be used when --nd=1)" << std::endl;
+    std::cout << "   0           no split" << std::endl;
+    std::cout << "   1           left half & right half" << std::endl;
+    std::cout << "   2           top half & bottom half" << std::endl;
+    std::cout << "   3           cyclic split from left to right" << std::endl;
+    std::cout << "   4           cyclic split from top to bottom" << std::endl;
+    std::cout << " --nd <num>    Number of GPU devices (default: 1)" << std::endl;
 }
 
 /**
@@ -52,8 +100,10 @@ int main(int argc, char *argv[]) {
  * @param inputVideo Video for which lanes are detected
  * @param outputVideo Video where results are written to
  * @param houghStrategy Strategy which should be used to parform hough transform
+ * @param nDevs Number of GPU devices
  */
-void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo, int houghStrategy) {
+void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo,
+        HoughStrategy houghStrategy, SplitStrategy splitStrategy, int nDevs) {
     cv::Mat frame, preProcFrame;
     std::vector<Line> lines;
 
@@ -63,15 +113,14 @@ void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo, int h
 	clock_t writeTime = 0;
     clock_t totalTime = 0;
 
-    std::cout << "Processing video " << (houghStrategy == CUDA ? "using CUDA" : "Sequentially") << std::endl;
+    std::cout << "Processing video " << (houghStrategy == HoughStrategy::kCuda ? "using CUDA" : "Sequentially") << std::endl;
     totalTime -= clock();
 
     int frameWidth = inputVideo.get(cv::CAP_PROP_FRAME_WIDTH);
     int frameHeight = inputVideo.get(cv::CAP_PROP_FRAME_HEIGHT);
-    int nDevs = 2;
 
     HoughTransformHandle *handle;
-    createHandle(handle, houghStrategy, frameWidth, frameHeight, nDevs);
+    createHandle(handle, frameWidth, frameHeight, houghStrategy, splitStrategy, nDevs);
 
 	for( ; ; ) {
         // Read next frame
@@ -92,9 +141,9 @@ void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo, int h
         // Perform hough transform
         houghTime -= clock();
         lines.clear();
-        if (houghStrategy == CUDA)
+        if (houghStrategy == HoughStrategy::kCuda)
             houghTransformCuda(handle, preProcFrame, lines);
-        else if (houghStrategy == SEQUENTIAL)
+        else if (houghStrategy == HoughStrategy::kSeq)
             houghTransformSeq(handle, preProcFrame, lines);
         houghTime += clock();
 
