@@ -37,6 +37,13 @@ struct SeqHandle: HoughTransformHandle {
  * well as device only needs to be allocated only once for all frames.
  */
 struct CudaHandle: HoughTransformHandle {
+    // =====================================
+    // additional param in order to crop roi
+    int *d_roi_startX;
+    int *d_roi_startY;
+    // =====================================
+    
+    // original param
     int frameSize;
     int *lines;
     int *d_lines;
@@ -56,7 +63,8 @@ struct CudaHandle: HoughTransformHandle {
  * @param handle Handle to be initialized
  * @param houghStrategy Strategy used to perform hough transform
  */
-void createHandle(HoughTransformHandle *&handle, int houghStrategy, int frameWidth, int frameHeight);
+// void createHandle(HoughTransformHandle *&handle, int houghStrategy, int frameWidth, int frameHeight);
+void createHandle(HoughTransformHandle *&handle, int houghStrategy, int frameWidth, int frameHeight, int roi_frameWidth, int roi_frameHeight);
 
 /**
  * Frees memory on host and device that was allocated for the handle
@@ -84,6 +92,6 @@ void houghTransformSeq(HoughTransformHandle *handle, cv::Mat frame, std::vector<
  * @param frame Video frame on which hough transform is applied
  * @param lines Vector to which found lines are added to 
  */
-void houghTransformCuda(HoughTransformHandle *handle, cv::Mat frame, std::vector<Line> &lines);
-
+// void houghTransformCuda(HoughTransformHandle *handle, cv::Mat frame, std::vector<Line> &lines);
+void houghTransformCuda(HoughTransformHandle *handle, cv::Mat frame, std::vector<Line> &lines, int* roi_startX, int* roi_startY);
 #endif  // HOUGH_TRANSFORM_H
