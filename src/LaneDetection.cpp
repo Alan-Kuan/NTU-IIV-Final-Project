@@ -122,12 +122,12 @@ void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo,
     HoughTransformHandle *handle;
     createHandle(handle, frameWidth, frameHeight, houghStrategy, splitStrategy, nDevs);
 
-	for( ; ; ) {
+	for (;;) {
         // Read next frame
         readTime -= clock();
 		inputVideo >> frame;
         readTime += clock();
-		if(frame.empty())
+		if (frame.empty())
 			break;
 
         // Apply pre-processing steps
