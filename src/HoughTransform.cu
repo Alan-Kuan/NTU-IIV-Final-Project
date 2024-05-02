@@ -2,10 +2,11 @@
 
 #include <cmath>
 #include <cstring>
-#include <iostream>
 #include <vector>
 
 #include <nccl.h>
+
+#include "Line.hpp"
 
 #define THETA_STEP_SIZE 0.1
 #define RHO_STEP_SIZE 2
@@ -114,24 +115,26 @@ void houghTransformSeq(HoughTransformHandle *handle, cv::Mat frame, std::vector<
  * CUDA kernel responsible for trying all different rho/theta combinations for
  * non-zero pixels and adding votes to accumulator
  */
-__global__ void houghKernel(int frameWidth, int frameHeight, unsigned char* frame, int nRows, int nCols, int *accumulator) {
+__global__ void houghKernel(int frameWidth, int frameHeight, unsigned char* frame, int nRows, int nCols, int *accumulator, int dev) {
     int i = blockIdx.x * blockDim.y + threadIdx.y;
     int j = blockIdx.y * blockDim.z + threadIdx.z;
     double theta;
     int rho;
 
     if(i < frameHeight && j < frameWidth && ((int) frame[(i * frameWidth) + j]) != 0) {
+        int x = j;
+        int y = i + dev * frameHeight;
 
         // thetas of interest will be close to 45 and close to 135 (vertical lines)
         // we are doing 2 thetas at a time, 1 for each theta of Interest
         // we use thetas varying 15 degrees more and less
         for(int k = threadIdx.x * (1 / THETA_STEP_SIZE); k < (threadIdx.x + 1) * (1 / THETA_STEP_SIZE); k++) {
             theta = THETA_A-THETA_VARIATION + ((double)k*THETA_STEP_SIZE);
-            rho = calcRho(j, i, theta);
+            rho = calcRho(x, y, theta);
             atomicAdd(&accumulator[index(nRows, nCols, rho, theta)], 1);
 
             theta = THETA_B-THETA_VARIATION + ((double)k*THETA_STEP_SIZE);
-            rho = calcRho(j, i, theta);
+            rho = calcRho(x, y, theta);
             atomicAdd(&accumulator[index(nRows, nCols, rho, theta)], 1);
         }
     }
@@ -141,9 +144,9 @@ __global__ void houghKernel(int frameWidth, int frameHeight, unsigned char* fram
  * CUDA kernel responsible for finding lines based on the number of votes for
  * every rho/theta combination
  */
-__global__ void findLinesKernel(int nRows, int nCols, int *accumulator, int *lines, int *lineCounter) {
+__global__ void findLinesKernel(int nRows, int nCols, int *accumulator, int *lines, int *lineCounter, int dev) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
-    int j = blockIdx.y * blockDim.y + threadIdx.y;
+    int j = blockIdx.y * blockDim.y + threadIdx.y + dev * (nCols / 2);
 
     if (accumulator[i * nCols + j] >= THRESHOLD && isLocalMaximum(i, j, nRows, nCols, accumulator)) {
         int insertPt = atomicAdd(lineCounter, 2);
@@ -164,27 +167,52 @@ __global__ void findLinesKernel(int nRows, int nCols, int *accumulator, int *lin
  */
 void houghTransformCuda(HoughTransformHandle *handle, cv::Mat frame, std::vector<Line> &lines) {
     CudaHandle *h = (CudaHandle *) handle;
+    size_t accCount = h->nRows * h->nCols;
+    size_t accSize = accCount * sizeof(int);
+    size_t linesCount = 2 * MAX_NUM_LINES;
+    size_t linesSize = linesCount * sizeof(int);
 
-    cudaMemcpy(h->d_frame[0], frame.ptr(), h->frameSize, cudaMemcpyHostToDevice);
-    cudaMemset(h->d_accumulator[0], 0, h->nRows * h->nCols * sizeof(int));
+    // split into top half and bottom half
+    for (int dev = 0; dev < h->nDevs; dev++) {
+        cudaSetDevice(dev);
+        cudaMemcpy(h->d_frame[dev], frame.ptr() + dev * h->frameSize, h->frameSize, cudaMemcpyHostToDevice);
+        cudaMemset(h->d_accumulator[dev], 0, accSize);
+    }
 
-    houghKernel<<<h->houghGridDim, h->houghBlockDim>>>(frame.cols, frame.rows, h->d_frame[0], h->nRows, h->nCols, h->d_accumulator[0]);
-    cudaDeviceSynchronize();
+    for (int dev = 0; dev < h->nDevs; dev++) {
+        cudaSetDevice(dev);
+        houghKernel<<<h->houghGridDim, h->houghBlockDim>>>(frame.cols, frame.rows / h->nDevs, h->d_frame[dev],
+            h->nRows, h->nCols, h->d_accumulator[dev], dev);
+    }
+    for (int dev = 0; dev < h->nDevs; dev++) {
+        cudaSetDevice(dev);
+        cudaDeviceSynchronize();
+    }
 
-    cudaError err = cudaGetLastError();
-    if (err != cudaSuccess)
-        std::cerr << "Error: " << cudaGetErrorString(err) << std::endl;
+    ncclGroupStart();
+    for (int dev = 0; dev < h->nDevs; dev++) {
+        ncclAllReduce(h->d_accumulator[dev], h->d_accumulator[dev], accCount,
+            ncclInt, ncclSum, h->comms[dev], cudaStreamDefault);
+    }
+    ncclGroupEnd();
 
-    cudaMemset(h->d_lineCounter[0], 0, sizeof(int));
-    findLinesKernel<<<h->findLinesGridDim, h->findLinesBlockDim>>>(h->nRows, h->nCols,
-        h->d_accumulator[0], h->d_lines[0], h->d_lineCounter[0]);
-    cudaDeviceSynchronize();
+    for (int dev = 0; dev < h->nDevs; dev++) {
+        cudaSetDevice(dev);
+        cudaMemset(h->d_lineCounter[dev], 0, sizeof(int));
+        findLinesKernel<<<h->findLinesGridDim, h->findLinesBlockDim>>>(h->nRows, h->nCols,
+            h->d_accumulator[dev], h->d_lines[dev], h->d_lineCounter[dev], dev);
+    }
 
-    cudaMemcpy(&h->lineCounter, h->d_lineCounter[0], sizeof(int), cudaMemcpyDeviceToHost);
-    cudaMemcpy(h->lines, h->d_lines[0], 2 * MAX_NUM_LINES * sizeof(int), cudaMemcpyDeviceToHost);
+    for (int dev = 0; dev < h->nDevs; dev++) {
+        cudaSetDevice(dev);
+        cudaDeviceSynchronize();
 
-    for (int i = 0; i < h->lineCounter - 1; i += 2) {
-        lines.push_back(Line(h->lines[i], h->lines[i + 1]));
+        cudaMemcpy(&h->lineCounter, h->d_lineCounter[dev], sizeof(int), cudaMemcpyDeviceToHost);
+        cudaMemcpy(h->lines, h->d_lines[dev], linesSize, cudaMemcpyDeviceToHost);
+
+        for (size_t i = 0; i < h->lineCounter; i += 2) {
+            lines.push_back(Line(h->lines[i], h->lines[i + 1]));
+        }
     }
 }
 
@@ -208,11 +236,10 @@ void createHandle(HoughTransformHandle *&handle, int frameWidth, int frameHeight
 
         // buffers
         cudaMallocHost(&(h->lines), 2 * MAX_NUM_LINES * sizeof(int));
-        h->lineCounter = 0;
 
         h->d_lines = new int *[nDevs];
         h->d_lineCounter = new int *[nDevs];
-        h->d_frame = new uchar *[nDevs];
+        h->d_frame = new unsigned char *[nDevs];
         h->d_accumulator = new int *[nDevs];
 
         for (int dev = 0; dev < nDevs; dev++) {
@@ -233,9 +260,9 @@ void createHandle(HoughTransformHandle *&handle, int frameWidth, int frameHeight
         }
 
         h->houghBlockDim = dim3(32, 5, 5);
-        h->houghGridDim = dim3(ceil(frameHeight / 5), ceil(frameWidth / 5));
+        h->houghGridDim = dim3(ceil(frameHeight / nDevs / 5), ceil(frameWidth / 5));
         h->findLinesBlockDim = dim3(32, 32);
-        h->findLinesGridDim = dim3(ceil(nRows / 32), ceil(nCols / 32));
+        h->findLinesGridDim = dim3(ceil(nRows / 32), ceil(nCols / nDevs / 32));
 
         handle = (HoughTransformHandle *) h;
     } else if (houghStrategy == HoughStrategy::kSeq) {
@@ -260,6 +287,7 @@ void destroyHandle(HoughTransformHandle *&handle, HoughStrategy houghStrategy) {
 
         // buffers
         for (int dev = 0; dev < h->nDevs; dev++) {
+            cudaSetDevice(dev);
             cudaFree(h->d_lines[dev]);
             cudaFree(h->d_lineCounter[dev]);
             cudaFree(h->d_frame[dev]);
