@@ -80,7 +80,7 @@ void houghTransformSeq(HoughTransformHandle *handle, cv::Mat frame, std::vector<
 
     for(int i = 0; i < frame.rows; i++) {
         for (int j = 0; j < frame.cols; j++) {
-            if ((int) frame.at<uchar>(i, j) == 0)
+            if ((int) frame.at<unsigned char>(i, j) == 0)
                 continue;
 
             // thetas of interest will be close to 45 and close to 135 (vertical lines)
@@ -198,7 +198,7 @@ void createHandle(HoughTransformHandle *&handle, HoughStrategy houghStrategy, in
 
     if (houghStrategy == HoughStrategy::kCuda) {
         CudaHandle *h = new CudaHandle();
-        h->frameSize = frameWidth * frameHeight * sizeof(uchar);
+        h->frameSize = frameWidth * frameHeight * sizeof(unsigned char);
         cudaMallocHost(&(h->lines), 2 * MAX_NUM_LINES * sizeof(int));
         h->lineCounter = 0;
 

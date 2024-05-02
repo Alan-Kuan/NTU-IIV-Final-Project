@@ -41,7 +41,7 @@ struct CudaHandle: HoughTransformHandle {
     int *d_lines;
     int lineCounter;
     int *d_lineCounter;
-    uchar *d_frame;
+    unsigned char *d_frame;
     int *d_accumulator;
     dim3 houghBlockDim;
     dim3 houghGridDim;
