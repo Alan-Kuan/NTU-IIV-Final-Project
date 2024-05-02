@@ -82,7 +82,7 @@ void houghTransformSeq(HoughTransformHandle *handle, cv::Mat frame, std::vector<
 
     for(int i = 0; i < frame.rows; i++) {
         for (int j = 0; j < frame.cols; j++) {
-            if ((int) frame.at<uchar>(i, j) == 0)
+            if ((int) frame.at<unsigned char>(i, j) == 0)
                 continue;
 
             // thetas of interest will be close to 45 and close to 135 (vertical lines)
@@ -203,7 +203,7 @@ void createHandle(HoughTransformHandle *&handle, int frameWidth, int frameHeight
     if (houghStrategy == HoughStrategy::kCuda) {
         CudaHandle *h = new CudaHandle();
         // FIX: we assume device number divides global frame size
-        h->frameSize = frameWidth * frameHeight * sizeof(uchar) / nDevs;
+        h->frameSize = frameWidth * frameHeight * sizeof(unsigned char) / nDevs;
         h->splitStrategy = splitStrategy;
 
         // buffers

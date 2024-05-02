@@ -185,7 +185,7 @@ cv::Mat plotAccumulator(int nRows, int nCols, int *accumulator) {
     cv::Mat plotImg(nRows, nCols, CV_8UC1, cv::Scalar(0));
 	for (int i = 0; i < nRows; i++) {
   		for (int j = 0; j < nCols; j++) {
-			plotImg.at<uchar>(i, j) = std::min(accumulator[(i * nCols) + j] * 4, 255);
+			plotImg.at<unsigned char>(i, j) = std::min(accumulator[(i * nCols) + j] * 4, 255);
   		}
   	}
 
