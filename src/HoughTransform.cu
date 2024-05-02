@@ -115,15 +115,25 @@ void houghTransformSeq(HoughTransformHandle *handle, cv::Mat frame, std::vector<
  * CUDA kernel responsible for trying all different rho/theta combinations for
  * non-zero pixels and adding votes to accumulator
  */
-__global__ void houghKernel(int frameWidth, int frameHeight, unsigned char* frame, int nRows, int nCols, int *accumulator, int dev) {
+__global__ void houghKernel(int frameWidth, int frameHeight, unsigned char* frame,
+        int nRows, int nCols, int *accumulator, int dev, SplitStrategy splitStrategy) {
     int i = blockIdx.x * blockDim.y + threadIdx.y;
     int j = blockIdx.y * blockDim.z + threadIdx.z;
     double theta;
     int rho;
 
     if (i < frameHeight && j < frameWidth && ((int) frame[(i * frameWidth) + j]) != 0) {
-        int x = j;
-        int y = i + dev * frameHeight;
+        int x, y;
+        switch (splitStrategy) {
+        case SplitStrategy::kLeftRight:
+            x = j + dev * frameWidth;
+            y = i;
+            break;
+        case SplitStrategy::kTopBottom:
+            x = j;
+            y = i + dev * frameHeight;
+            break;
+        }
 
         // thetas of interest will be close to 45 and close to 135 (vertical lines)
         // we are doing 2 thetas at a time, 1 for each theta of Interest
@@ -172,17 +182,26 @@ void houghTransformCuda(HoughTransformHandle *handle, cv::Mat frame, std::vector
     size_t linesCount = 2 * MAX_NUM_LINES;
     size_t linesSize = linesCount * sizeof(int);
 
-    // split into top half and bottom half
     for (int dev = 0; dev < h->nDevs; dev++) {
         cudaSetDevice(dev);
-        cudaMemcpy(h->d_frame[dev], frame.ptr() + dev * h->frameSize, h->frameSize, cudaMemcpyHostToDevice);
+
+        switch (h->splitStrategy) {
+        case SplitStrategy::kLeftRight:
+            cudaMemcpy2D(h->d_frame[dev], h->frameWidth, frame.ptr() + dev * h->frameWidth, frame.cols,
+                h->frameWidth, h->frameHeight, cudaMemcpyHostToDevice);
+            break;
+        case SplitStrategy::kTopBottom:
+            cudaMemcpy(h->d_frame[dev], frame.ptr() + dev * h->frameSize, h->frameSize, cudaMemcpyHostToDevice);
+            break;
+        }
+
         cudaMemset(h->d_accumulator[dev], 0, accSize);
     }
 
     for (int dev = 0; dev < h->nDevs; dev++) {
         cudaSetDevice(dev);
-        houghKernel<<<h->houghGridDim, h->houghBlockDim>>>(frame.cols, frame.rows / h->nDevs, h->d_frame[dev],
-            h->nRows, h->nCols, h->d_accumulator[dev], dev);
+        houghKernel<<<h->houghGridDim, h->houghBlockDim>>>(h->frameWidth, h->frameHeight, h->d_frame[dev],
+            h->nRows, h->nCols, h->d_accumulator[dev], dev, h->splitStrategy);
     }
     for (int dev = 0; dev < h->nDevs; dev++) {
         cudaSetDevice(dev);
@@ -230,9 +249,23 @@ void createHandle(HoughTransformHandle *&handle, int frameWidth, int frameHeight
 
     if (houghStrategy == HoughStrategy::kCuda) {
         CudaHandle *h = new CudaHandle();
-        // FIX: we assume device number divides global frame size
-        h->frameSize = frameWidth * frameHeight * sizeof(unsigned char) / nDevs;
+
         h->splitStrategy = splitStrategy;
+        h->frameSize = frameWidth * frameHeight * sizeof(unsigned char);
+
+        switch (splitStrategy) {
+        case SplitStrategy::kLeftRight:
+            // FIX: we assume device number divides global frame size
+            h->frameSize /= nDevs;
+            h->frameWidth = frameWidth / nDevs;
+            h->frameHeight = frameHeight;
+            break;
+        case SplitStrategy::kTopBottom:
+            h->frameSize /= nDevs;
+            h->frameWidth = frameWidth;
+            h->frameHeight = frameHeight / nDevs;
+            break;
+        }
 
         // buffers
         cudaMallocHost(&(h->lines), 2 * MAX_NUM_LINES * sizeof(int));
@@ -260,7 +293,15 @@ void createHandle(HoughTransformHandle *&handle, int frameWidth, int frameHeight
         }
 
         h->houghBlockDim = dim3(32, 5, 5);
-        h->houghGridDim = dim3(ceil(frameHeight / nDevs / 5), ceil(frameWidth / 5));
+        switch (splitStrategy) {
+        case SplitStrategy::kLeftRight:
+            h->houghGridDim = dim3(ceil(frameHeight / 5), ceil(frameWidth / nDevs / 5));
+            break;
+        case SplitStrategy::kTopBottom:
+            h->houghGridDim = dim3(ceil(frameHeight / nDevs / 5), ceil(frameWidth / 5));
+            break;
+        }
+
         h->findLinesBlockDim = dim3(32, 32);
         h->findLinesGridDim = dim3(ceil(nRows / 32), ceil(nCols / nDevs / 32));
 

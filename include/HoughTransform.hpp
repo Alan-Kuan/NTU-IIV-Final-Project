@@ -13,9 +13,9 @@ enum HoughStrategy { kSeq, kCuda };
 enum SplitStrategy {
     kNone,
     kLeftRight,
-    kTopBootom,
+    kTopBottom,
     kLeftRightCyclic,
-    kTopBootomCyclic,
+    kTopBottomCyclic,
 };
 
 /** 
@@ -45,6 +45,7 @@ struct SeqHandle: HoughTransformHandle {
  */
 struct CudaHandle: HoughTransformHandle {
     int frameSize;
+    int frameWidth, frameHeight;
     SplitStrategy splitStrategy;
 
     // buffers
