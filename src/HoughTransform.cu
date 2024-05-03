@@ -112,15 +112,14 @@ void houghTransformSeq(HoughTransformHandle *handle, cv::Mat frame, std::vector<
  * CUDA kernel responsible for trying all different rho/theta combinations for
  * non-zero pixels and adding votes to accumulator
  */
-// __global__ void houghKernel(int frameWidth, int frameHeight, unsigned char* frame, int nRows, int nCols, int *accumulator) {
-__global__ void houghKernel(int frameWidth, int frameHeight, unsigned char* frame, int* roi_startX, int* roi_startY,int nRows, int nCols, int *accumulator) {
+__global__ void houghKernel(int frameWidth, int frameHeight, unsigned char* frame, int roiStartX, int roiStartY,int nRows, int nCols, int *accumulator) {
     int i = blockIdx.x * blockDim.y + threadIdx.y;
     int j = blockIdx.y * blockDim.z + threadIdx.z;
     double theta;
     int rho;
 
-    int new_i = i + (*roi_startY);
-    int new_j = j + (*roi_startX);
+    int new_i = i + roiStartY;
+    int new_j = j + roiStartX;
     if(new_i < frameHeight && new_j < frameWidth && ((int) frame[(new_i * frameWidth) + new_j]) != 0) {
 
         // thetas of interest will be close to 45 and close to 135 (vertical lines)
@@ -164,20 +163,13 @@ __global__ void findLinesKernel(int nRows, int nCols, int *accumulator, int *lin
  * @param lines Vector to which found lines are added to
  */
 // void houghTransformCuda(HoughTransformHandle *handle, cv::Mat frame, std::vector<Line> &lines) {
-void houghTransformCuda(HoughTransformHandle *handle, cv::Mat frame, std::vector<Line> &lines, int* roi_startX, int* roi_startY) {
+void houghTransformCuda(HoughTransformHandle *handle, cv::Mat frame, std::vector<Line> &lines) {
     CudaHandle *h = (CudaHandle *) handle;
 
     cudaMemcpy(h->d_frame, frame.ptr(), h->frameSize, cudaMemcpyHostToDevice);
     cudaMemset(h->d_accumulator, 0, h->nRows * h->nCols * sizeof(int));
 
-    // =========================================================================
-    // additional param in order to crop roi.
-    cudaMemcpy(h->d_roi_startX, roi_startX, sizeof(int), cudaMemcpyHostToDevice);
-    cudaMemcpy(h->d_roi_startY, roi_startY, sizeof(int), cudaMemcpyHostToDevice);
-    // =========================================================================
-
-    // houghKernel<<<h->houghGridDim, h->houghBlockDim>>>(frame.cols, frame.rows, h->d_frame, h->nRows, h->nCols, h->d_accumulator);
-    houghKernel<<<h->houghGridDim, h->houghBlockDim>>>(frame.cols, frame.rows, h->d_frame, h->d_roi_startX, h->d_roi_startY, h->nRows, h->nCols, h->d_accumulator);
+    houghKernel<<<h->houghGridDim, h->houghBlockDim>>>(frame.cols, frame.rows, h->d_frame, h->roiStartX, h->roiStartY, h->nRows, h->nCols, h->d_accumulator);
     cudaDeviceSynchronize();
 
     cudaError err = cudaGetLastError();
@@ -203,8 +195,12 @@ void houghTransformCuda(HoughTransformHandle *handle, cv::Mat frame, std::vector
  * @param handle Handle to be initialized
  * @param houghStrategy Strategy used to perform hough transform
  */
-void createHandle(HoughTransformHandle *&handle, HoughStrategy houghStrategy, int frameWidth, int frameHeight, int roi_frameWidth, int roi_frameHeight) {
-    int nRows = (int) ceil(sqrt(roi_frameHeight * roi_frameHeight + roi_frameWidth * roi_frameWidth)) * 2 / RHO_STEP_SIZE;
+void createHandle(HoughTransformHandle *&handle, HoughStrategy houghStrategy, int frameWidth, int frameHeight) {
+    // additional param in order to crop roi, refering to regionOfInterest.
+    int roiFrameWidth = frameWidth - (frameWidth / 9) - (frameWidth / 9); 
+    int roiFrameHeight = frameHeight - (frameHeight / 2); 
+
+    int nRows = (int) ceil(sqrt(roiFrameHeight * roiFrameHeight + roiFrameWidth * roiFrameWidth)) * 2 / RHO_STEP_SIZE;
     int nCols = (THETA_B -THETA_A + (2*THETA_VARIATION)) / THETA_STEP_SIZE;
 
     if (houghStrategy == HoughStrategy::kCuda) {
@@ -217,14 +213,9 @@ void createHandle(HoughTransformHandle *&handle, HoughStrategy houghStrategy, in
         cudaMalloc(&h->d_lineCounter, sizeof(int));
         cudaMalloc(&h->d_frame, h->frameSize);
         cudaMalloc(&h->d_accumulator, nRows * nCols * sizeof(int));
-        // =========================================================================
-        // additional param in order to crop roi
-        cudaMalloc(&h->d_roi_startX, sizeof(int));
-        cudaMalloc(&h->d_roi_startY, sizeof(int));
-        // =========================================================================
 
         h->houghBlockDim = dim3(32, 5, 5);
-        h->houghGridDim = dim3(ceil(roi_frameHeight / 5), ceil(roi_frameWidth / 5));
+        h->houghGridDim = dim3(ceil(roiFrameHeight / 5), ceil(roiFrameWidth / 5));
         h->findLinesBlockDim = dim3(32, 32);
         h->findLinesGridDim = dim3(ceil(nRows / 32), ceil(nCols / 32));
 
@@ -234,6 +225,10 @@ void createHandle(HoughTransformHandle *&handle, HoughStrategy houghStrategy, in
         h->accumulator = new int[nRows * nCols];
         handle = (HoughTransformHandle *) h;
     }
+
+    // additional param in order to crop roi, refering to regionOfInterest.
+    handle->roiStartX = frameWidth / 9;
+    handle->roiStartY = frameHeight / 2;
 
     handle->nRows = nRows;
     handle->nCols = nCols;

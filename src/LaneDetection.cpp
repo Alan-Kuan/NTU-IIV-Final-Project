@@ -14,7 +14,7 @@
 
 void showUsage(const char* arg0);
 void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo, HoughStrategy houghStrategy);
-void drawLines(cv::Mat &frame, std::vector<Line> lines, int roi_startX, int roi_startY);
+void drawLines(cv::Mat &frame, std::vector<Line> lines);
 cv::Mat plotAccumulator(int nRows, int nCols, int *accumulator);
 
 extern int optind;
@@ -94,19 +94,9 @@ void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo, Hough
 
     int frameWidth  = inputVideo.get(cv::CAP_PROP_FRAME_WIDTH);
     int frameHeight = inputVideo.get(cv::CAP_PROP_FRAME_HEIGHT);
-    // ===================================================================
-    // additional param in order to crop roi, refering to regionOfInterest.
-    int startX          = frameWidth / 9;
-    int startY          = frameHeight / 2;
-    int* roi_startX     = &startX;
-	int* roi_startY     = &startY;
-    int roi_frameWidth  = frameWidth - (frameWidth / 9) - (frameWidth / 9); 
-    int roi_frameHeight = frameHeight - (frameHeight / 2); 
-    // ===================================================================
 
     HoughTransformHandle *handle;
-    // createHandle(handle, houghStrategy, frameWidth, frameHeight);
-    createHandle(handle, houghStrategy, frameWidth, frameHeight, roi_frameWidth, roi_frameHeight);
+    createHandle(handle, houghStrategy, frameWidth, frameHeight);
 
 	for( ; ; ) {
         // Read next frame
@@ -128,14 +118,14 @@ void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo, Hough
         houghTime -= clock();
         lines.clear();
         if (houghStrategy == HoughStrategy::kCuda)
-            houghTransformCuda(handle, preProcFrame, lines, roi_startX, roi_startY);
+            houghTransformCuda(handle, preProcFrame, lines);
         else if (houghStrategy == HoughStrategy::kSeq)
             houghTransformSeq(handle, preProcFrame, lines);
         houghTime += clock();
 
         // Draw lines to frame and write to output video
         writeTime -= clock();
-        drawLines(frame, lines, startX, startY);
+        drawLines(frame, lines);
         outputVideo << frame;
         writeTime += clock();
     }
@@ -152,7 +142,7 @@ void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo, Hough
 }
 
 /** Draws given lines onto frame */
-void drawLines(cv::Mat &frame, std::vector<Line> lines, int roi_startX, int roi_startY) {
+void drawLines(cv::Mat &frame, std::vector<Line> lines) {
     for (size_t i = 0; i < lines.size(); i++) {
         int y1 = frame.rows;
         int y2 = (frame.rows / 2) + (frame.rows / 10);
