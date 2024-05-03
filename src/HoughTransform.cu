@@ -80,7 +80,10 @@ void houghTransformSeq(HoughTransformHandle *handle, cv::Mat frame, std::vector<
 
     for(int i = 0; i < frame.rows; i++) {
         for (int j = 0; j < frame.cols; j++) {
-            if ((int) frame.at<unsigned char>(i, j) == 0)
+            int new_i = i + h->roiStartY;
+            int new_j = j + h->roiStartX;
+
+            if ((int) frame.at<unsigned char>(new_i, new_j) == 0)
                 continue;
 
             // thetas of interest will be close to 45 and close to 135 (vertical lines)
@@ -88,11 +91,11 @@ void houghTransformSeq(HoughTransformHandle *handle, cv::Mat frame, std::vector<
             // we use thetas varying 15 degrees more and less
             for(int k = 0; k < 2 * THETA_VARIATION * (1 / THETA_STEP_SIZE); k++) {
                 theta = THETA_A - THETA_VARIATION + ((double) k * THETA_STEP_SIZE);
-                rho = calcRho(j, i, theta);
+                rho = calcRho(new_j, new_i, theta);
                 h->accumulator[index(h->nRows, h->nCols, rho, theta)] += 1;
 
                 theta = THETA_B-THETA_VARIATION + ((double) k * THETA_STEP_SIZE);
-                rho = calcRho(j, i, theta);
+                rho = calcRho(new_j, new_i, theta);
                 h->accumulator[index(h->nRows, h->nCols, rho, theta)] += 1;
             }
         }
