@@ -17,6 +17,8 @@ enum HoughStrategy { kSeq, kCuda };
  */
 struct HoughTransformHandle {
     // additional param in order to crop roi
+    int roiFrameWidth;
+    int roiFrameHeight;
     int roiStartX;
     int roiStartY;
     /// Number of rows in the accumulator (number of possible rhos)
@@ -40,6 +42,7 @@ struct SeqHandle: HoughTransformHandle {
  */
 struct CudaHandle: HoughTransformHandle {
     int frameSize;
+    int roiStart;
     int *lines;
     int *d_lines;
     int lineCounter;

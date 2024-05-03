@@ -56,15 +56,5 @@ cv::Mat regionOfInterest(cv::Mat img) {
     cv::fillConvexPoly(mask, ROI_Poly, 255, cv::LineTypes::LINE_8, 0);
 	cv::bitwise_and(img, mask, img);
 
-	// Crop areas of interest
-	// int roi_startX = img.cols / 9;
-	// int roi_startY = img.rows / 2;
-	// int roi_width  = img.cols - (img.cols / 9) - (img.cols / 9);          
-    // int roi_height = img.rows - (img.rows / 2); 
-
-	// cv::Rect roi(roi_startX, roi_startY, roi_width, roi_height);
-	// cv::Mat croppedImage = img(roi);
-
 	return img;
-	// return croppedImage;
 }
