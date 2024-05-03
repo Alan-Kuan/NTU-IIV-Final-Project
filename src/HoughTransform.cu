@@ -114,13 +114,14 @@ void houghTransformSeq(HoughTransformHandle *handle, cv::Mat frame, std::vector<
  * CUDA kernel responsible for trying all different rho/theta combinations for
  * non-zero pixels and adding votes to accumulator
  */
-__global__ void houghKernel(int frameWidth, int frameHeight, unsigned char* frame, int nRows, int nCols, int *accumulator, const int devIdx) {
+__global__ void houghKernel(int frameWidth, int frameHeight, unsigned char* frame, 
+                                int nRows, int nCols, int *accumulator, const int devIdx, SplitStrategy strategy) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     int j = blockIdx.y * blockDim.y + threadIdx.y;
     double theta;
     int rho;
-
-    if(i < frameHeight && j < frameWidth && ((int) frame[(i * frameWidth) + j]) != 0 && blockIdx.y % 2 == devIdx) {
+    bool splitFlag = (strategy == SplitStrategy::kLeftRightCyclic) ? blockIdx.y % 2 == devIdx : blockIdx.x % 2 == devIdx;
+    if(i < frameHeight && j < frameWidth && ((int) frame[(i * frameWidth) + j]) != 0 && splitFlag) {
 
         // thetas of interest will be close to 45 and close to 135 (vertical lines)
         // we are doing 2 thetas at a time, 1 for each theta of Interest
@@ -141,9 +142,9 @@ __global__ void houghKernel(int frameWidth, int frameHeight, unsigned char* fram
  * CUDA kernel responsible for finding lines based on the number of votes for
  * every rho/theta combination
  */
-__global__ void findLinesKernel(int nRows, int nCols, int *accumulator, int *lines, int *lineCounter) {
+__global__ void findLinesKernel(int nRows, int nCols, int *accumulator, int *lines, int *lineCounter, const int devIdx) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
-    int j = blockIdx.y * blockDim.y + threadIdx.y;
+    int j = (blockIdx.y * blockDim.y + threadIdx.y) + devIdx * (nCols / 2);
 
     if (accumulator[i * nCols + j] >= THRESHOLD && isLocalMaximum(i, j, nRows, nCols, accumulator)) {
         int insertPt = atomicAdd(lineCounter, 2);
@@ -173,25 +174,47 @@ void houghTransformCuda(HoughTransformHandle *handle, cv::Mat frame, std::vector
 
     for (int dev = 0; dev < h->nDevs; dev++) {
         cudaSetDevice(dev);
-        houghKernel<<<h->houghGridDim, h->houghBlockDim>>>(frame.cols, frame.rows, h->d_frame[dev], h->nRows, h->nCols, h->d_accumulator[dev], dev);    
+        houghKernel<<<h->houghGridDim, h->houghBlockDim>>>(frame.cols, frame.rows, 
+            h->d_frame[dev], h->nRows, h->nCols, h->d_accumulator[dev], dev, h->splitStrategy);    
+    }
+    for (int dev = 0; dev < h->nDevs; dev++) {
+        cudaSetDevice(dev);
         cudaDeviceSynchronize();
     }
-    
+
     cudaError err = cudaGetLastError();
     if (err != cudaSuccess)
         std::cerr << "Error: " << cudaGetErrorString(err) << std::endl;
+    
+    ncclGroupStart();
+    for (int dev = 0; dev < h->nDevs; dev++) { 
+        ncclAllReduce(h->d_accumulator[dev], h->d_accumulator[dev], h->nRows * h->nCols, 
+            ncclInt, ncclSum, h->comms[dev], cudaStreamDefault);
+    }   
+    ncclGroupEnd();
 
-    cudaMemset(h->d_lineCounter[0], 0, sizeof(int));
-    findLinesKernel<<<h->findLinesGridDim, h->findLinesBlockDim>>>(h->nRows, h->nCols,
-        h->d_accumulator[0], h->d_lines[0], h->d_lineCounter[0]);
-    cudaDeviceSynchronize();
-
-    cudaMemcpy(&h->lineCounter, h->d_lineCounter[0], sizeof(int), cudaMemcpyDeviceToHost);
-    cudaMemcpy(h->lines, h->d_lines[0], 2 * MAX_NUM_LINES * sizeof(int), cudaMemcpyDeviceToHost);
-
-    for (int i = 0; i < h->lineCounter - 1; i += 2) {
-        lines.push_back(Line(h->lines[i], h->lines[i + 1]));
+    for (int dev = 0; dev < h->nDevs; dev++) {
+        cudaSetDevice(dev);
+        cudaMemset(h->d_lineCounter[dev], 0, sizeof(int));
     }
+    
+    for (int dev = 0; dev < h->nDevs; dev++) {
+        cudaSetDevice(dev);
+        findLinesKernel<<<h->findLinesGridDim, h->findLinesBlockDim>>>(h->nRows, h->nCols,
+            h->d_accumulator[dev], h->d_lines[dev], h->d_lineCounter[dev], dev);
+    }
+
+    for (int dev = 0; dev < h->nDevs; dev++) {
+        cudaSetDevice(dev);
+        cudaDeviceSynchronize();
+        cudaMemcpy(&h->lineCounter, h->d_lineCounter[dev], sizeof(int), cudaMemcpyDeviceToHost);
+
+        cudaMemcpy(h->lines, h->d_lines[dev], 2 * MAX_NUM_LINES * sizeof(int), cudaMemcpyDeviceToHost);       
+        for (int i = 0; i < h->lineCounter; i += 2) {
+            lines.push_back(Line(h->lines[i], h->lines[i + 1]));
+        }  
+    }
+
 }
 
 /**
@@ -209,9 +232,12 @@ void createHandle(HoughTransformHandle *&handle, int frameWidth, int frameHeight
     if (houghStrategy == HoughStrategy::kCuda) {
         CudaHandle *h = new CudaHandle();
         // FIX: we assume device number divides global frame size
-        h->frameSize = frameWidth * frameHeight * sizeof(uchar) / nDevs;
-        h->splitStrategy = splitStrategy;
+        if (splitStrategy == SplitStrategy::kLeftRightCyclic || splitStrategy == SplitStrategy::kTopBootomCyclic)
+            h->frameSize = frameWidth * frameHeight * sizeof(uchar);
+        else 
+            h->frameSize = frameWidth * frameHeight * sizeof(uchar) / nDevs;
 
+        h->splitStrategy = splitStrategy;
         // buffers
         cudaMallocHost(&(h->lines), 2 * MAX_NUM_LINES * sizeof(int));
         h->lineCounter = 0;
@@ -238,10 +264,13 @@ void createHandle(HoughTransformHandle *&handle, int frameWidth, int frameHeight
             ncclCommInitAll(h->comms, nDevs, h->devs);
         }
 
-        h->houghBlockDim = dim3(32, 5, 5);
+        h->houghBlockDim = dim3(5, 5, 32);
         h->houghGridDim = dim3(ceil(frameHeight / 5), ceil(frameWidth / 5));
         h->findLinesBlockDim = dim3(32, 32);
-        h->findLinesGridDim = dim3(ceil(nRows / 32), ceil(nCols / 32));
+        if (splitStrategy == SplitStrategy::kLeftRightCyclic || splitStrategy == SplitStrategy::kTopBootomCyclic)
+            h->findLinesGridDim = dim3(ceil(nRows / 32), ceil(nCols / nDevs / 32));
+        else 
+            h->findLinesGridDim = dim3(ceil(nRows / 32), ceil(nCols / 32));
 
         handle = (HoughTransformHandle *) h;
     } else if (houghStrategy == HoughStrategy::kSeq) {
@@ -266,6 +295,7 @@ void destroyHandle(HoughTransformHandle *&handle, HoughStrategy houghStrategy) {
 
         // buffers
         for (int dev = 0; dev < h->nDevs; dev++) {
+            cudaSetDevice(dev);
             cudaFree(h->d_lines[dev]);
             cudaFree(h->d_lineCounter[dev]);
             cudaFree(h->d_frame[dev]);
