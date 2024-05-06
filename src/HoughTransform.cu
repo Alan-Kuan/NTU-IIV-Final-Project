@@ -1,5 +1,7 @@
 #include "HoughTransform.hpp"
 
+#include <iostream>
+
 #include <cmath>
 #include <cstring>
 #include <vector>
@@ -83,7 +85,10 @@ void houghTransformSeq(HoughTransformHandle *handle, cv::Mat frame, std::vector<
 
     for (int i = 0; i < frame.rows; i++) {
         for (int j = 0; j < frame.cols; j++) {
-            if ((int) frame.at<unsigned char>(i, j) == 0)
+            int new_i = i + h->roiStartY;
+            int new_j = j + h->roiStartX;
+
+            if ((int) frame.at<unsigned char>(new_i, new_j) == 0)
                 continue;
 
             // thetas of interest will be close to 45 and close to 135 (vertical lines)
@@ -91,11 +96,11 @@ void houghTransformSeq(HoughTransformHandle *handle, cv::Mat frame, std::vector<
             // we use thetas varying 15 degrees more and less
             for (int k = 0; k < 2 * THETA_VARIATION * (1 / THETA_STEP_SIZE); k++) {
                 theta = THETA_A - THETA_VARIATION + ((double) k * THETA_STEP_SIZE);
-                rho = calcRho(j, i, theta);
+                rho = calcRho(new_j, new_i, theta);
                 h->accumulator[index(h->nRows, h->nCols, rho, theta)] += 1;
 
                 theta = THETA_B-THETA_VARIATION + ((double) k * THETA_STEP_SIZE);
-                rho = calcRho(j, i, theta);
+                rho = calcRho(new_j, new_i, theta);
                 h->accumulator[index(h->nRows, h->nCols, rho, theta)] += 1;
             }
         }
@@ -115,23 +120,22 @@ void houghTransformSeq(HoughTransformHandle *handle, cv::Mat frame, std::vector<
  * CUDA kernel responsible for trying all different rho/theta combinations for
  * non-zero pixels and adding votes to accumulator
  */
-__global__ void houghKernel(int frameWidth, int frameHeight, unsigned char* frame,
+__global__ void houghKernel(int roiFrameWidth, int roiFrameHeight, unsigned char* roiFrame, int roiStartX, int roiStartY,
         int nRows, int nCols, int *accumulator, int dev, SplitStrategy splitStrategy) {
     int i = blockIdx.x * blockDim.y + threadIdx.y;
     int j = blockIdx.y * blockDim.z + threadIdx.z;
     double theta;
     int rho;
 
-    if (i < frameHeight && j < frameWidth && ((int) frame[(i * frameWidth) + j]) != 0) {
-        int x, y;
+    if (i < roiFrameHeight && j < roiFrameWidth && ((int) roiFrame[(i * roiFrameWidth) + j]) != 0) {
+        int x = j + roiStartX;
+        int y = i + roiStartY;
         switch (splitStrategy) {
         case SplitStrategy::kLeftRight:
-            x = j + dev * frameWidth;
-            y = i;
+            x += dev * roiFrameWidth;
             break;
         case SplitStrategy::kTopBottom:
-            x = j;
-            y = i + dev * frameHeight;
+            y += dev * roiFrameHeight;
             break;
         }
 
@@ -184,36 +188,29 @@ void houghTransformCuda(HoughTransformHandle *handle, cv::Mat frame, std::vector
 
     for (int dev = 0; dev < h->nDevs; dev++) {
         cudaSetDevice(dev);
-
-        switch (h->splitStrategy) {
-        case SplitStrategy::kLeftRight:
-            cudaMemcpy2D(h->d_frame[dev], h->frameWidth, frame.ptr() + dev * h->frameWidth, frame.cols,
-                h->frameWidth, h->frameHeight, cudaMemcpyHostToDevice);
-            break;
-        case SplitStrategy::kTopBottom:
-            cudaMemcpy(h->d_frame[dev], frame.ptr() + dev * h->frameSize, h->frameSize, cudaMemcpyHostToDevice);
-            break;
-        }
-
+        cudaMemcpy2D(h->d_frame[dev], h->roiFrameWidth, frame.ptr() + h->frameOffset[dev], frame.cols,
+            h->roiFrameWidth, h->roiFrameHeight, cudaMemcpyHostToDevice);
         cudaMemset(h->d_accumulator[dev], 0, accSize);
     }
 
     for (int dev = 0; dev < h->nDevs; dev++) {
         cudaSetDevice(dev);
-        houghKernel<<<h->houghGridDim, h->houghBlockDim>>>(h->frameWidth, h->frameHeight, h->d_frame[dev],
-            h->nRows, h->nCols, h->d_accumulator[dev], dev, h->splitStrategy);
+        houghKernel<<<h->houghGridDim, h->houghBlockDim>>>(h->roiFrameWidth, h->roiFrameHeight, h->d_frame[dev],
+            h->roiStartX, h->roiStartY, h->nRows, h->nCols, h->d_accumulator[dev], dev, h->splitStrategy);
     }
     for (int dev = 0; dev < h->nDevs; dev++) {
         cudaSetDevice(dev);
         cudaDeviceSynchronize();
     }
 
-    ncclGroupStart();
-    for (int dev = 0; dev < h->nDevs; dev++) {
-        ncclAllReduce(h->d_accumulator[dev], h->d_accumulator[dev], accCount,
-            ncclInt, ncclSum, h->comms[dev], cudaStreamDefault);
+    if (h->splitStrategy != SplitStrategy::kNone) {
+        ncclGroupStart();
+        for (int dev = 0; dev < h->nDevs; dev++) {
+            ncclAllReduce(h->d_accumulator[dev], h->d_accumulator[dev], accCount,
+                ncclInt, ncclSum, h->comms[dev], cudaStreamDefault);
+        }
+        ncclGroupEnd();
     }
-    ncclGroupEnd();
 
     for (int dev = 0; dev < h->nDevs; dev++) {
         cudaSetDevice(dev);
@@ -244,26 +241,39 @@ void houghTransformCuda(HoughTransformHandle *handle, cv::Mat frame, std::vector
  */
 void createHandle(HoughTransformHandle *&handle, int frameWidth, int frameHeight,
         HoughStrategy houghStrategy, SplitStrategy splitStrategy, int nDevs) {
-    int nRows = (int) ceil(sqrt(frameHeight * frameHeight + frameWidth * frameWidth)) * 2 / RHO_STEP_SIZE;
+    // additional param in order to crop roi, refering to regionOfInterest.
+    int roiFrameWidth = frameWidth - (frameWidth / 9) - (frameWidth / 9); 
+    int roiFrameHeight = frameHeight - (frameHeight / 2 + frameHeight / 10); 
+    int roiStartX = frameWidth / 9;
+    int roiStartY = frameHeight / 2 + frameHeight / 10;
+
+    int nRows = (int) ceil(sqrt(roiFrameHeight * roiFrameHeight + roiFrameWidth * roiFrameWidth)) * 2 / RHO_STEP_SIZE;
     int nCols = (THETA_B -THETA_A + (2*THETA_VARIATION)) / THETA_STEP_SIZE;
 
     if (houghStrategy == HoughStrategy::kCuda) {
         CudaHandle *h = new CudaHandle();
 
+        h->nDevs = nDevs;
         h->splitStrategy = splitStrategy;
-        h->frameSize = frameWidth * frameHeight * sizeof(unsigned char);
+        h->roiFrameSize = roiFrameWidth * roiFrameHeight * sizeof(unsigned char);
+        // FIX: we assume device number divides global frame size
+        if (splitStrategy != SplitStrategy::kNone) h->roiFrameSize /= nDevs;
+        h->roiStart = roiStartY * frameWidth + roiStartX;  // offset in 1-dim
+
+        // for copying roi frame
+        h->frameOffset = new int[nDevs];
+        h->frameOffset[0] = h->roiStart;
 
         switch (splitStrategy) {
         case SplitStrategy::kLeftRight:
-            // FIX: we assume device number divides global frame size
-            h->frameSize /= nDevs;
-            h->frameWidth = frameWidth / nDevs;
-            h->frameHeight = frameHeight;
+            for (int dev = 0; dev < nDevs; dev++) {
+                h->frameOffset[dev] = h->roiStart + dev * (roiFrameWidth / nDevs);
+            }
             break;
         case SplitStrategy::kTopBottom:
-            h->frameSize /= nDevs;
-            h->frameWidth = frameWidth;
-            h->frameHeight = frameHeight / nDevs;
+            for (int dev = 0; dev < nDevs; dev++) {
+                h->frameOffset[dev] = h->roiStart + dev * frameWidth * (roiFrameHeight / nDevs);
+            }
             break;
         }
 
@@ -279,14 +289,13 @@ void createHandle(HoughTransformHandle *&handle, int frameWidth, int frameHeight
             cudaSetDevice(dev);
             cudaMalloc(h->d_lines + dev, 2 * MAX_NUM_LINES * sizeof(int));
             cudaMalloc(h->d_lineCounter + dev, sizeof(int));
-            cudaMalloc(h->d_frame + dev, h->frameSize);
+            cudaMalloc(h->d_frame + dev, h->roiFrameSize);
             cudaMalloc(h->d_accumulator + dev, nRows * nCols * sizeof(int));
         }
 
         // nccl
         if (splitStrategy != SplitStrategy::kNone) {
             h->comms = new ncclComm_t[nDevs];
-            h->nDevs = nDevs;
             h->devs = new int[nDevs];
             for (int i = 0; i < nDevs; i++) h->devs[i] = i;
             ncclCommInitAll(h->comms, nDevs, h->devs);
@@ -295,11 +304,13 @@ void createHandle(HoughTransformHandle *&handle, int frameWidth, int frameHeight
         h->houghBlockDim = dim3(32, 5, 5);
         switch (splitStrategy) {
         case SplitStrategy::kLeftRight:
-            h->houghGridDim = dim3(ceil(frameHeight / 5), ceil(frameWidth / nDevs / 5));
+            h->houghGridDim = dim3(ceil(roiFrameHeight / 5), ceil(roiFrameWidth / nDevs / 5));
             break;
         case SplitStrategy::kTopBottom:
-            h->houghGridDim = dim3(ceil(frameHeight / nDevs / 5), ceil(frameWidth / 5));
+            h->houghGridDim = dim3(ceil(roiFrameHeight / nDevs / 5), ceil(roiFrameWidth / 5));
             break;
+        default:
+            h->houghGridDim = dim3(ceil(roiFrameHeight / 5), ceil(roiFrameWidth / 5));
         }
 
         h->findLinesBlockDim = dim3(32, 32);
@@ -312,6 +323,18 @@ void createHandle(HoughTransformHandle *&handle, int frameWidth, int frameHeight
         handle = (HoughTransformHandle *) h;
     }
 
+    handle->roiFrameWidth = roiFrameWidth;
+    handle->roiFrameHeight = roiFrameHeight;
+    switch (splitStrategy) {
+    case SplitStrategy::kLeftRight:
+        handle->roiFrameWidth /= nDevs;
+        break;
+    case SplitStrategy::kTopBottom:
+        handle->roiFrameHeight /= nDevs;
+        break;
+    }
+    handle->roiStartX = roiStartX;
+    handle->roiStartY = roiStartY;
     handle->nRows = nRows;
     handle->nCols = nCols;
 }
@@ -325,6 +348,9 @@ void createHandle(HoughTransformHandle *&handle, int frameWidth, int frameHeight
 void destroyHandle(HoughTransformHandle *&handle, HoughStrategy houghStrategy) {
     if (houghStrategy == HoughStrategy::kCuda) {
         CudaHandle *h = (CudaHandle *) handle;
+
+        // for copying roi frame
+        delete[] h->frameOffset;
 
         // buffers
         for (int dev = 0; dev < h->nDevs; dev++) {

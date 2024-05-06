@@ -24,6 +24,11 @@ enum SplitStrategy {
  * executions of different frames.
  */
 struct HoughTransformHandle {
+    // additional param in order to crop roi
+    int roiFrameWidth;
+    int roiFrameHeight;
+    int roiStartX;
+    int roiStartY;
     /// Number of rows in the accumulator (number of possible rhos)
     int nRows;
     /// Number of columns in the accumulator (number of possible thetas)
@@ -44,9 +49,13 @@ struct SeqHandle: HoughTransformHandle {
  * well as device only needs to be allocated only once for all frames.
  */
 struct CudaHandle: HoughTransformHandle {
-    int frameSize;
-    int frameWidth, frameHeight;
+    int nDevs;
     SplitStrategy splitStrategy;
+    int roiFrameSize;
+    int roiStart;
+
+    // for copying roi frame
+    int *frameOffset;
 
     // buffers
     int *lines;
@@ -58,7 +67,6 @@ struct CudaHandle: HoughTransformHandle {
 
     // nccl
     ncclComm_t *comms;
-    int nDevs;
     int *devs;
 
     dim3 houghBlockDim;
@@ -105,5 +113,4 @@ void houghTransformSeq(HoughTransformHandle *handle, cv::Mat frame, std::vector<
  * @param lines Vector to which found lines are added to 
  */
 void houghTransformCuda(HoughTransformHandle *handle, cv::Mat frame, std::vector<Line> &lines);
-
 #endif  // HOUGH_TRANSFORM_H
