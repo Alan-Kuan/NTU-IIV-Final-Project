@@ -23,6 +23,14 @@ enum SplitStrategy {
     kTopBottomCyclic,
 };
 
+const char *const splitStrategyName[] = {
+    "no split",
+    "left half & right half",
+    "top half & bottom half",
+    "cyclic split from left to right",
+    "cyclic split from top to bottom"
+};
+
 /** 
  * Handle which tracks info that is required for every execution of hough 
  * transform. The handle allows the hough transforms to reuse variables between

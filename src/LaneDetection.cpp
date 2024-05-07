@@ -22,6 +22,7 @@ cv::Mat plotAccumulator(int nRows, int nCols, int *accumulator);
 
 extern char *optarg;
 extern int optind;
+extern const char *const splitStrategyName[];
 
 int main(int argc, char *argv[]) {
     if (argc < 3) {
@@ -115,6 +116,8 @@ void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo,
     clock_t totalTime = 0;
 
     std::cout << "Processing video " << (houghStrategy == HoughStrategy::kCuda ? "using CUDA" : "Sequentially") << std::endl;
+    std::cout << "Device number: " << nDevs << ", ";
+    std::cout << "Split Strategy: " << splitStrategyName[splitStrategy] << std::endl;
     totalTime -= clock();
 
     int frameWidth  = inputVideo.get(cv::CAP_PROP_FRAME_WIDTH);
