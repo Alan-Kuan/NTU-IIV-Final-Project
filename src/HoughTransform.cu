@@ -181,16 +181,12 @@ __global__ void findLinesKernel(int nRows, int nCols, int *accumulator, int *lin
  */
 void houghTransformCuda(HoughTransformHandle *handle, cv::Mat frame, std::vector<Line> &lines) {
     CudaHandle *h = (CudaHandle *) handle;
-    size_t accCount = h->nRows * h->nCols;
-    size_t accSize = accCount * sizeof(int);
-    size_t linesCount = 2 * MAX_NUM_LINES;
-    size_t linesSize = linesCount * sizeof(int);
 
     for (int dev = 0; dev < h->nDevs; dev++) {
         cudaSetDevice(dev);
         cudaMemcpy2D(h->d_frame[dev], h->roiFrameWidth, frame.ptr() + h->frameOffset[dev], frame.cols,
             h->roiFrameWidth, h->roiFrameHeight, cudaMemcpyHostToDevice);
-        cudaMemset(h->d_accumulator[dev], 0, accSize);
+        cudaMemset(h->d_accumulator[dev], 0, h->accSize);
     }
 
     for (int dev = 0; dev < h->nDevs; dev++) {
@@ -206,7 +202,7 @@ void houghTransformCuda(HoughTransformHandle *handle, cv::Mat frame, std::vector
     if (h->splitStrategy != SplitStrategy::kNone) {
         ncclGroupStart();
         for (int dev = 0; dev < h->nDevs; dev++) {
-            ncclAllReduce(h->d_accumulator[dev], h->d_accumulator[dev], accCount,
+            ncclAllReduce(h->d_accumulator[dev], h->d_accumulator[dev], h->accCount,
                 ncclInt, ncclSum, h->comms[dev], cudaStreamDefault);
         }
         ncclGroupEnd();
@@ -224,7 +220,7 @@ void houghTransformCuda(HoughTransformHandle *handle, cv::Mat frame, std::vector
         cudaDeviceSynchronize();
 
         cudaMemcpy(&h->lineCounter, h->d_lineCounter[dev], sizeof(int), cudaMemcpyDeviceToHost);
-        cudaMemcpy(h->lines, h->d_lines[dev], linesSize, cudaMemcpyDeviceToHost);
+        cudaMemcpy(h->lines, h->d_lines[dev], h->linesSize, cudaMemcpyDeviceToHost);
 
         for (size_t i = 0; i < h->lineCounter; i += 2) {
             lines.push_back(Line(h->lines[i], h->lines[i + 1]));
@@ -253,6 +249,7 @@ void createHandle(HoughTransformHandle *&handle, int frameWidth, int frameHeight
     if (houghStrategy == HoughStrategy::kCuda) {
         CudaHandle *h = new CudaHandle();
 
+        // attributes
         h->nDevs = nDevs;
         h->splitStrategy = splitStrategy;
         h->roiFrameSize = roiFrameWidth * roiFrameHeight * sizeof(unsigned char);
@@ -276,6 +273,10 @@ void createHandle(HoughTransformHandle *&handle, int frameWidth, int frameHeight
             }
             break;
         }
+
+        h->accCount = nRows * nCols;
+        h->accSize = h->accCount * sizeof(int);
+        h->linesSize = 2 * MAX_NUM_LINES * sizeof(int);
 
         // buffers
         cudaMallocHost(&(h->lines), 2 * MAX_NUM_LINES * sizeof(int));

@@ -49,13 +49,14 @@ struct SeqHandle: HoughTransformHandle {
  * well as device only needs to be allocated only once for all frames.
  */
 struct CudaHandle: HoughTransformHandle {
+    // attributes
     int nDevs;
     SplitStrategy splitStrategy;
     int roiFrameSize;
     int roiStart;
-
-    // for copying roi frame
-    int *frameOffset;
+    int *frameOffset;  // for copying roi frame
+    size_t accCount, accSize;
+    size_t linesSize;
 
     // buffers
     int *lines;
