@@ -50,7 +50,7 @@ Options:
 
 Example:
 ```sh
-./build/lanedet test-video.mp4 output.mp4 --nd=2 --ss=1
+./build/lanedet test-video.mp4 output.avi --nd=2 --ss=1
 ```
 
 ## License
