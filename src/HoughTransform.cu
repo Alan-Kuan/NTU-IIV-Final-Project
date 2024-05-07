@@ -177,25 +177,22 @@ __global__ void findLinesKernel(int nRows, int nCols, int *accumulator, int *lin
  */
 void houghTransformCuda(HoughTransformHandle *handle, cv::Mat frame, std::vector<Line> &lines) {
     CudaHandle *h = (CudaHandle *) handle;
-    size_t accCount = h->nRows * h->nCols;
-    size_t accSize = accCount * sizeof(int);
-    size_t linesCount = 2 * MAX_NUM_LINES;
-    size_t linesSize = linesCount * sizeof(int);
 
     for (int dev = 0; dev < h->nDevs; dev++) {
         cudaSetDevice(dev);
-
         switch (h->splitStrategy) {
         case SplitStrategy::kLeftRight:
-            cudaMemcpy2D(h->d_frame[dev], h->frameWidth, frame.ptr() + dev * h->frameWidth, frame.cols,
+            cudaMemcpy2DAsync(h->d_frame[dev], h->frameWidth, frame.ptr() + dev * h->frameWidth, frame.cols,
                 h->frameWidth, h->frameHeight, cudaMemcpyHostToDevice);
             break;
         case SplitStrategy::kTopBottom:
-            cudaMemcpy(h->d_frame[dev], frame.ptr() + dev * h->frameSize, h->frameSize, cudaMemcpyHostToDevice);
+            cudaMemcpyAsync(h->d_frame[dev], frame.ptr() + dev * h->frameSize, h->frameSize, cudaMemcpyHostToDevice);
             break;
         }
-
-        cudaMemset(h->d_accumulator[dev], 0, accSize);
+    }
+    for (int dev = 0; dev < h->nDevs; dev++) {
+        cudaSetDevice(dev);
+        cudaMemsetAsync(h->d_accumulator[dev], 0, h->accSize);
     }
 
     for (int dev = 0; dev < h->nDevs; dev++) {
@@ -203,34 +200,37 @@ void houghTransformCuda(HoughTransformHandle *handle, cv::Mat frame, std::vector
         houghKernel<<<h->houghGridDim, h->houghBlockDim>>>(h->frameWidth, h->frameHeight, h->d_frame[dev],
             h->nRows, h->nCols, h->d_accumulator[dev], dev, h->splitStrategy);
     }
-    for (int dev = 0; dev < h->nDevs; dev++) {
-        cudaSetDevice(dev);
-        cudaDeviceSynchronize();
-    }
 
     ncclGroupStart();
     for (int dev = 0; dev < h->nDevs; dev++) {
-        ncclAllReduce(h->d_accumulator[dev], h->d_accumulator[dev], accCount,
+        ncclAllReduce(h->d_accumulator[dev], h->d_accumulator[dev], h->accCount,
             ncclInt, ncclSum, h->comms[dev], cudaStreamDefault);
     }
     ncclGroupEnd();
 
     for (int dev = 0; dev < h->nDevs; dev++) {
         cudaSetDevice(dev);
-        cudaMemset(h->d_lineCounter[dev], 0, sizeof(int));
+        cudaMemsetAsync(h->d_lineCounter[dev], 0, sizeof(int));
+    }
+    for (int dev = 0; dev < h->nDevs; dev++) {
+        cudaSetDevice(dev);
         findLinesKernel<<<h->findLinesGridDim, h->findLinesBlockDim>>>(h->nRows, h->nCols,
             h->d_accumulator[dev], h->d_lines[dev], h->d_lineCounter[dev], dev);
+    }
+    for (int dev = 0; dev < h->nDevs; dev++) {
+        cudaSetDevice(dev);
+        cudaMemcpyAsync(h->lineCounter + dev, h->d_lineCounter[dev], sizeof(int), cudaMemcpyDeviceToHost);
+        cudaMemcpyAsync(h->lines[dev], h->d_lines[dev], h->linesSize, cudaMemcpyDeviceToHost);
     }
 
     for (int dev = 0; dev < h->nDevs; dev++) {
         cudaSetDevice(dev);
         cudaDeviceSynchronize();
+    }
 
-        cudaMemcpy(&h->lineCounter, h->d_lineCounter[dev], sizeof(int), cudaMemcpyDeviceToHost);
-        cudaMemcpy(h->lines, h->d_lines[dev], linesSize, cudaMemcpyDeviceToHost);
-
-        for (size_t i = 0; i < h->lineCounter; i += 2) {
-            lines.push_back(Line(h->lines[i], h->lines[i + 1]));
+    for (int dev = 0; dev < h->nDevs; dev++) {
+        for (size_t i = 0; i < h->lineCounter[dev]; i += 2) {
+            lines.push_back(Line(h->lines[dev][i], h->lines[dev][i + 1]));
         }
     }
 }
@@ -250,6 +250,7 @@ void createHandle(HoughTransformHandle *&handle, int frameWidth, int frameHeight
     if (houghStrategy == HoughStrategy::kCuda) {
         CudaHandle *h = new CudaHandle();
 
+        // attributes
         h->splitStrategy = splitStrategy;
         h->frameSize = frameWidth * frameHeight * sizeof(unsigned char);
 
@@ -267,8 +268,13 @@ void createHandle(HoughTransformHandle *&handle, int frameWidth, int frameHeight
             break;
         }
 
+        h->accCount = nRows * nCols;
+        h->accSize = h->accCount * sizeof(int);
+        h->linesSize = 2 * MAX_NUM_LINES * sizeof(int);
+
         // buffers
-        cudaMallocHost(&(h->lines), 2 * MAX_NUM_LINES * sizeof(int));
+        h->lines = new int *[nDevs];
+        h->lineCounter = new int[nDevs];
 
         h->d_lines = new int *[nDevs];
         h->d_lineCounter = new int *[nDevs];
@@ -277,10 +283,13 @@ void createHandle(HoughTransformHandle *&handle, int frameWidth, int frameHeight
 
         for (int dev = 0; dev < nDevs; dev++) {
             cudaSetDevice(dev);
-            cudaMalloc(h->d_lines + dev, 2 * MAX_NUM_LINES * sizeof(int));
+
+            cudaMallocHost(h->lines + dev, h->linesSize);
+
+            cudaMalloc(h->d_lines + dev, h->linesSize);
             cudaMalloc(h->d_lineCounter + dev, sizeof(int));
             cudaMalloc(h->d_frame + dev, h->frameSize);
-            cudaMalloc(h->d_accumulator + dev, nRows * nCols * sizeof(int));
+            cudaMalloc(h->d_accumulator + dev, h->accSize);
         }
 
         // nccl
@@ -329,18 +338,22 @@ void destroyHandle(HoughTransformHandle *&handle, HoughStrategy houghStrategy) {
         // buffers
         for (int dev = 0; dev < h->nDevs; dev++) {
             cudaSetDevice(dev);
+
+            cudaFreeHost(h->lines[dev]);
+
             cudaFree(h->d_lines[dev]);
             cudaFree(h->d_lineCounter[dev]);
             cudaFree(h->d_frame[dev]);
             cudaFree(h->d_accumulator[dev]);
         }
 
+        delete[] h->lines;
+        delete[] h->lineCounter;
+
         delete[] h->d_lines;
         delete[] h->d_lineCounter;
         delete[] h->d_frame;
         delete[] h->d_accumulator;
-
-        cudaFreeHost(h->lines);
 
         // nccl
         if (h->splitStrategy != SplitStrategy::kNone) {

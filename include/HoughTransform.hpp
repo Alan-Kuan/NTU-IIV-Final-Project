@@ -44,14 +44,17 @@ struct SeqHandle: HoughTransformHandle {
  * well as device only needs to be allocated only once for all frames.
  */
 struct CudaHandle: HoughTransformHandle {
+    // attributes
+    SplitStrategy splitStrategy;
     int frameSize;
     int frameWidth, frameHeight;
-    SplitStrategy splitStrategy;
+    size_t accCount, accSize;
+    size_t linesSize;
 
     // buffers
-    int *lines;
+    int **lines;
     int **d_lines;
-    int lineCounter;
+    int *lineCounter;
     int **d_lineCounter;
     unsigned char **d_frame;
     int **d_accumulator;
