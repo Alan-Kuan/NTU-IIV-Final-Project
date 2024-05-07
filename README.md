@@ -1,23 +1,58 @@
-# CUDA Lane Detection
-CUDA Implementation of a Hough Transform based Lane Detection algorithm.
+# NTU IIV Final Project
+This work originates from the author of the repo [cuda-lane-detection](https://github.com/jonaspfab/cuda-lane-detection).
+We forked and optimized it by different means, such as reducing the region to process and distributing the workload to 2 GPU devices.
 
-<img src="https://i.ibb.co/5RM4n5F/Picture1.png" alt="Picture1" border="0">
+## Dependencies
+- CMake
+- Make / Ninja
+- OpenCV
+- NCCL
 
-## Compiling
-The program can be compiled on the Linux lab machines using the following command:
+## Build
+We chose CMake to configure the building environment.
+You can build the project with preferred build system.
+
+Make:
+```sh
+mkdir build
+cmake -B build
+make -C build
+```
+
+or
+
+Ninja:
+```sh
+mkdir build
+cmake -B build -G Ninja
+ninja -C build
+```
+
+## Usage
+The executable is generated in the directory `build`.
 
 ```
-nvcc -gencode arch=compute_50,code=sm_50 -I/usr/local/include/opencv4 -L/usr/local/lib/ *.cpp *cu -lopencv_core -lopencv_highgui -lopencv_imgcodecs -lopencv_imgproc -lopencv_videoio -std=c++11 -o LaneDetection.out
+Usage: ./build/lanedet inputVideo outputVideo [options]
+
+ inputVideo    Input video for which lanes are detected
+ outputVideo   Name of resulting output video
+
+Options:
+ --seq         Perform hough transform sequentially on the CPU (if omitted, CUDA is used)
+ --ss <num>    How to split the frame (default: 0, should not be used when --nd=1)
+   0           no split
+   1           left half & right half
+   2           top half & bottom half
+   3           cyclic split from left to right
+   4           cyclic split from top to bottom
+ --nd <num>    Number of GPU devices (default: 1)
 ```
 
-## Running
-
-The Lane Detection program requires two positional arguments. The `inputVideo` which is a path to the input video and the `outputVideo` which is the path at which the result video is stored.
-
-Additionally, we can add either a `--cuda` flag to use the CUDA implementation or a `--seq` flag to use the sequential implementation. 
-
-Therefore, in order to run it for the test video provided in the repository we can use the following command.
-
+Example:
+```sh
+./build/lanedet test-video.mp4 output.mp4 --nd=2 --ss=1
 ```
-./LaneDetection.out ./test-video.mp4 ./result-video.avi --cuda
-```
+
+## License
+The file `cmake/modules/FindNCCL.cmake` came from the repo [dmlc/xgboost](https://github.com/dmlc/xgboost/blob/master/cmake/modules/FindNccl.cmake),
+which is licensed under **the Apache License, Version 2.0**.
