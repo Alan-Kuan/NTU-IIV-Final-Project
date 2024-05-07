@@ -1,4 +1,5 @@
 add_library(htlib HoughTransform.cu)
+add_library(handle Handle.cu)
 
 add_executable(lanedet
     LaneDetection.cpp
@@ -7,4 +8,4 @@ add_executable(lanedet
 set_target_properties(lanedet
     PROPERTIES
     CUDA_SEPARABLE_COMPILATION ON)
-target_link_libraries(lanedet htlib ${libs})
+target_link_libraries(lanedet handle htlib ${libs})
