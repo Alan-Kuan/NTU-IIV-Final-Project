@@ -84,7 +84,7 @@ void showUsage(const char *arg0) {
     std::cout << " outputVideo   Name of resulting output video" << std::endl << std::endl;
     std::cout << "Options:" << std::endl;
     std::cout << " --seq         Perform hough transform sequentially on the CPU (if omitted, CUDA is used)" << std::endl;
-    std::cout << " --ss <num>    How to split the frame (default: 0, should no be used when --nd=1)" << std::endl;
+    std::cout << " --ss <num>    How to split the frame (default: 0, should not be used when --nd=1)" << std::endl;
     std::cout << "   0           no split" << std::endl;
     std::cout << "   1           left half & right half" << std::endl;
     std::cout << "   2           top half & bottom half" << std::endl;
