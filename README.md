@@ -39,13 +39,13 @@ Usage: ./build/lanedet inputVideo outputVideo [options]
 
 Options:
  --seq         Perform hough transform sequentially on the CPU (if omitted, CUDA is used)
- --ss <num>    How to split the frame (default: 0, should not be used when --nd=1)
+ --ss=<num>    How to split the frame (default: 0, should not be used when --nd=1)
    0           no split
    1           left half & right half
    2           top half & bottom half
    3           cyclic split from left to right
    4           cyclic split from top to bottom
- --nd <num>    Number of GPU devices (default: 1)
+ --nd=<num>    Number of GPU devices (default: 1)
 ```
 
 Example:
