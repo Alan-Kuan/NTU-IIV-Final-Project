@@ -28,4 +28,7 @@ void houghTransformSeq(HoughTransformHandle *handle, cv::Mat frame, std::vector<
  */
 void houghTransformCuda(HoughTransformHandle *handle, cv::Mat frame, std::vector<Line> &lines);
 
+// for generating the video of accumulator
+void copyAccumulator(HoughTransformHandle *handle, int *accumulator);
+
 #endif  // HOUGH_TRANSFORM_H

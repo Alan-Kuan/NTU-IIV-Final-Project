@@ -219,3 +219,9 @@ void houghTransformCuda(HoughTransformHandle *handle, cv::Mat frame, std::vector
         }
     }
 }
+
+// for generating the video of accumulator
+void copyAccumulator(HoughTransformHandle *handle, int *accumulator) {
+    CudaHandle *h = (CudaHandle *) handle;
+    cudaMemcpy(accumulator, h->d_accumulator[0], h->accSize, cudaMemcpyDeviceToHost);
+}

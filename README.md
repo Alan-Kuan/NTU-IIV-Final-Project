@@ -38,6 +38,7 @@ Usage: ./build/lanedet inputVideo outputVideo [options]
  outputVideo   Name of resulting output video
 
 Options:
+ --acc         Whether to generate a video of each frame's accumulator
  --seq         Perform hough transform sequentially on the CPU (if omitted, CUDA is used)
  --ss=<num>    How to split the frame (default: 0, should not be used when --nd=1)
    0           no split
