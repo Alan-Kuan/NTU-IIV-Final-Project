@@ -34,5 +34,10 @@
 *.out
 *.app
 
+# Video
+*.mp4
+*.avi
+!test-video.mp4
+
 # Build Directory
 build

@@ -9,18 +9,20 @@
 #include <opencv2/imgproc.hpp>
 #include <opencv2/videoio.hpp>
 
+#include "Handle.hpp"
 #include "HoughTransform.hpp"
 #include "Line.hpp"
 #include "Preprocessing.hpp"
 
 void showUsage(const char *arg0);
 void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo,
-    HoughStrategy houghStrategy, SplitStrategy splitStrategy, int nDevs);
+    HoughStrategy houghStrategy, SplitStrategy splitStrategy, int nDevs, bool genAccVideo);
 void drawLines(cv::Mat &frame, std::vector<Line> lines);
 cv::Mat plotAccumulator(int nRows, int nCols, int *accumulator);
 
 extern char *optarg;
 extern int optind;
+extern const char *const splitStrategyName[];
 
 int main(int argc, char *argv[]) {
     if (argc < 3) {
@@ -31,11 +33,13 @@ int main(int argc, char *argv[]) {
     HoughStrategy houghStrategy = kCuda;
     SplitStrategy splitStrategy = kNone;
     int nDevs = 1;
+    int genAccVideo = 0;
 
     struct option opts[] = {
+        { "acc", no_argument, &genAccVideo, 1 },
         { "seq", no_argument, (int *) &houghStrategy, HoughStrategy::kSeq },
-        { "ss", optional_argument, 0, 0 },
-        { "nd", optional_argument, 0, 0 },
+        { "ss", optional_argument, nullptr, 0 },
+        { "nd", optional_argument, nullptr, 0 },
         { nullptr, 0, nullptr, 0 },
     };
     int optIdx;
@@ -44,10 +48,10 @@ int main(int argc, char *argv[]) {
     while ((val = getopt_long_only(argc, argv, "", opts, &optIdx)) != -1) {
         if (val == 0) {
             switch (optIdx) {
-            case 1:
+            case 2:
                 splitStrategy = (SplitStrategy) strtol(optarg, nullptr, 10);
                 break;
-            case 2:
+            case 3:
                 nDevs = strtol(optarg, nullptr, 10);
                 break;
             }
@@ -73,7 +77,7 @@ int main(int argc, char *argv[]) {
     cv::VideoWriter video(videoOutput, cv::VideoWriter::fourcc('M','J','P','G'), 30,
         cv::Size(frameWidth, frameHeight), true);
 
-    detectLanes(capture, video, houghStrategy, splitStrategy, nDevs);
+    detectLanes(capture, video, houghStrategy, splitStrategy, nDevs, genAccVideo);
 
     return 0;
 }
@@ -83,14 +87,15 @@ void showUsage(const char *arg0) {
     std::cout << " inputVideo    Input video for which lanes are detected" << std::endl;
     std::cout << " outputVideo   Name of resulting output video" << std::endl << std::endl;
     std::cout << "Options:" << std::endl;
+    std::cout << " --acc         Whether to generate a video of each frame's accumulator" << std::endl;
     std::cout << " --seq         Perform hough transform sequentially on the CPU (if omitted, CUDA is used)" << std::endl;
-    std::cout << " --ss <num>    How to split the frame (default: 0, should no be used when --nd=1)" << std::endl;
+    std::cout << " --ss=<num>    How to split the frame (default: 0, should not be used when --nd=1)" << std::endl;
     std::cout << "   0           no split" << std::endl;
     std::cout << "   1           left half & right half" << std::endl;
     std::cout << "   2           top half & bottom half" << std::endl;
     std::cout << "   3           cyclic split from left to right" << std::endl;
     std::cout << "   4           cyclic split from top to bottom" << std::endl;
-    std::cout << " --nd <num>    Number of GPU devices (default: 1)" << std::endl;
+    std::cout << " --nd=<num>    Number of GPU devices (default: 1)" << std::endl;
 }
 
 /**
@@ -101,26 +106,42 @@ void showUsage(const char *arg0) {
  * @param outputVideo Video where results are written to
  * @param houghStrategy Strategy which should be used to parform hough transform
  * @param nDevs Number of GPU devices
+ * @param genAccVideo Whether to generate a video of each frame's accumulator
  */
 void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo,
-        HoughStrategy houghStrategy, SplitStrategy splitStrategy, int nDevs) {
+        HoughStrategy houghStrategy, SplitStrategy splitStrategy, int nDevs, bool genAccVideo) {
     cv::Mat frame, preProcFrame;
     std::vector<Line> lines;
 
-    clock_t readTime = 0;
-	clock_t prepTime = 0;
+    // for generating the video of accumulator
+    cv::VideoWriter accVideo;
+    int *accumulator;
+    genAccVideo = genAccVideo && (houghStrategy == HoughStrategy::kCuda);
+
+    clock_t readTime  = 0;
+	clock_t prepTime  = 0;
 	clock_t houghTime = 0;
 	clock_t writeTime = 0;
     clock_t totalTime = 0;
 
     std::cout << "Processing video " << (houghStrategy == HoughStrategy::kCuda ? "using CUDA" : "Sequentially") << std::endl;
+    std::cout << "Device number: " << nDevs << ", ";
+    std::cout << "Split Strategy: " << splitStrategyName[splitStrategy] << std::endl;
+    if (genAccVideo) std::cout << "Will also generate video of accumulator to 'accumulator.avi'." << std::endl;
     totalTime -= clock();
 
-    int frameWidth = inputVideo.get(cv::CAP_PROP_FRAME_WIDTH);
+    int frameWidth  = inputVideo.get(cv::CAP_PROP_FRAME_WIDTH);
     int frameHeight = inputVideo.get(cv::CAP_PROP_FRAME_HEIGHT);
 
     HoughTransformHandle *handle;
     createHandle(handle, frameWidth, frameHeight, houghStrategy, splitStrategy, nDevs);
+
+    if (genAccVideo) {
+        CudaHandle *h = (CudaHandle *) handle;
+        accVideo.open("accumulator.avi", cv::VideoWriter::fourcc('M','J','P','G'), 30,
+            cv::Size(h->nCols, h->nRows), false);
+        accumulator = new int[h->nRows * h->nCols];
+    }
 
 	for (;;) {
         // Read next frame
@@ -152,6 +173,12 @@ void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo,
         drawLines(frame, lines);
         outputVideo << frame;
         writeTime += clock();
+
+        if (genAccVideo) {
+            CudaHandle *h = (CudaHandle *) handle;
+            copyAccumulator(handle, accumulator);
+            accVideo << plotAccumulator(h->nRows, h->nCols, accumulator);
+        }
     }
 
     destroyHandle(handle, houghStrategy);
@@ -163,6 +190,11 @@ void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo,
 		 << (((float) houghTime) / CLOCKS_PER_SEC) << "\t"
 		 << (((float) writeTime) / CLOCKS_PER_SEC) << "\t"
     	 << (((float) totalTime) / CLOCKS_PER_SEC) << std::endl;
+
+    if (genAccVideo) {
+        delete[] accumulator;
+        accVideo.release();
+    }
 }
 
 /** Draws given lines onto frame */
