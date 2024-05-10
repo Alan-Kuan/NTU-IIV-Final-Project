@@ -152,7 +152,7 @@ __global__ void houghKernel(int roiFrameWidth, int roiFrameHeight, unsigned char
  */
 __global__ void findLinesKernel(int nRows, int nCols, int *accumulator, int *lines, int *lineCounter, int dev) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
-    int j = blockIdx.y * blockDim.y + threadIdx.y + dev * (nCols / 2);
+    int j = 2 * (blockIdx.y * blockDim.y + threadIdx.y) + dev;
 
     if (accumulator[i * nCols + j] >= THRESHOLD && isLocalMaximum(i, j, nRows, nCols, accumulator)) {
         int insertPt = atomicAdd(lineCounter, 2);
