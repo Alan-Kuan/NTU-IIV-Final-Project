@@ -114,12 +114,18 @@ void houghTransformSeq(HoughTransformHandle *handle, cv::Mat frame, std::vector<
  */
 __global__ void houghKernel(int roiFrameWidth, int roiFrameHeight, unsigned char* roiFrame, int roiStartX, int roiStartY,
         int nRows, int nCols, int *accumulator, int dev, SplitStrategy splitStrategy) {
-    int i = blockIdx.x * blockDim.y + threadIdx.y;
-    int j = blockIdx.y * blockDim.z + threadIdx.z;
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    int j = blockIdx.y * blockDim.y + threadIdx.y;
     double theta;
     int rho;
+    bool splitFlag = true;
+    if (splitStrategy == SplitStrategy::kLeftRightCyclic) {
+        splitFlag = blockIdx.y % 2 == dev;
+    }else if (splitStrategy == SplitStrategy::kTopBottomCyclic) {
+        splitFlag = blockIdx.x % 2 == dev;
+    }
 
-    if (i < roiFrameHeight && j < roiFrameWidth && ((int) roiFrame[(i * roiFrameWidth) + j]) != 0) {
+    if (i < roiFrameHeight && j < roiFrameWidth && ((int) roiFrame[(i * roiFrameWidth) + j]) != 0 && splitFlag) {
         int x = j + roiStartX;
         int y = i + roiStartY;
         switch (splitStrategy) {
@@ -134,7 +140,7 @@ __global__ void houghKernel(int roiFrameWidth, int roiFrameHeight, unsigned char
         // thetas of interest will be close to 45 and close to 135 (vertical lines)
         // we are doing 2 thetas at a time, 1 for each theta of Interest
         // we use thetas varying 15 degrees more and less
-        for (int k = threadIdx.x * (1 / THETA_STEP_SIZE); k < (threadIdx.x + 1) * (1 / THETA_STEP_SIZE); k++) {
+        for (int k = threadIdx.z * (1 / THETA_STEP_SIZE); k < (threadIdx.z + 1) * (1 / THETA_STEP_SIZE); k++) {
             theta = THETA_A-THETA_VARIATION + ((double)k*THETA_STEP_SIZE);
             rho = calcRho(x, y, theta);
             atomicAdd(&accumulator[index(nRows, nCols, rho, theta)], 1);

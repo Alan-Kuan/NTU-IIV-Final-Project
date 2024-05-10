@@ -30,7 +30,8 @@ void createHandle(HoughTransformHandle *&handle, int frameWidth, int frameHeight
         h->splitStrategy = splitStrategy;
         h->roiFrameSize = roiFrameWidth * roiFrameHeight * sizeof(unsigned char);
         // FIX: we assume device number divides global frame size
-        if (splitStrategy != SplitStrategy::kNone) h->roiFrameSize /= nDevs;
+        if (splitStrategy == SplitStrategy::kLeftRight || splitStrategy == SplitStrategy::kTopBottom) 
+            h->roiFrameSize /= nDevs;
         h->roiStart = roiStartY * frameWidth + roiStartX;  // offset in 1-dim
 
         // for copying roi frame
@@ -46,6 +47,12 @@ void createHandle(HoughTransformHandle *&handle, int frameWidth, int frameHeight
         case SplitStrategy::kTopBottom:
             for (int dev = 0; dev < nDevs; dev++) {
                 h->frameOffset[dev] = h->roiStart + dev * frameWidth * (roiFrameHeight / nDevs);
+            }
+            break;
+        case SplitStrategy::kLeftRightCyclic:
+        case SplitStrategy::kTopBottomCyclic:
+            for (int dev = 0; dev < nDevs; dev++) {
+                h->frameOffset[dev] = h->roiStart;
             }
             break;
         }
@@ -78,7 +85,7 @@ void createHandle(HoughTransformHandle *&handle, int frameWidth, int frameHeight
             ncclCommInitAll(h->comms, nDevs, h->devs);
         }
 
-        h->houghBlockDim = dim3(32, 5, 5);
+        h->houghBlockDim = dim3(5, 5, 32);
         switch (splitStrategy) {
         case SplitStrategy::kLeftRight:
             h->houghGridDim = dim3(ceil(roiFrameHeight / 5), ceil(roiFrameWidth / nDevs / 5));
