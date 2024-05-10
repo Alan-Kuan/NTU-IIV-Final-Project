@@ -37,6 +37,7 @@ const char *const splitStrategyName[] = {
  * executions of different frames.
  */
 struct HoughTransformHandle {
+    int frameWidth;  // actual frame width, for p_frame
     // additional param in order to crop roi
     int roiFrameWidth;
     int roiFrameHeight;
@@ -76,7 +77,8 @@ struct CudaHandle: HoughTransformHandle {
     int **d_lines;
     int *lineCounter;
     int **d_lineCounter;
-    unsigned char **d_frame;
+    unsigned char *p_frame;  // global size
+    unsigned char **d_frame;  // local roi size
     int **d_accumulator;
 
     // nccl

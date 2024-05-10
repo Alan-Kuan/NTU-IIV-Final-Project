@@ -20,7 +20,7 @@ void createHandle(HoughTransformHandle *&handle, int frameWidth, int frameHeight
     int roiStartY = frameHeight / 2 + frameHeight / 10;
 
     int nRows = (int) ceil(sqrt(roiFrameHeight * roiFrameHeight + roiFrameWidth * roiFrameWidth)) * 2 / RHO_STEP_SIZE;
-    int nCols = (THETA_B -THETA_A + (2*THETA_VARIATION)) / THETA_STEP_SIZE;
+    int nCols = (THETA_B - THETA_A + (2*THETA_VARIATION)) / THETA_STEP_SIZE;
 
     if (houghStrategy == HoughStrategy::kCuda) {
         CudaHandle *h = new CudaHandle();
@@ -56,6 +56,7 @@ void createHandle(HoughTransformHandle *&handle, int frameWidth, int frameHeight
 
         // -- buffers --
         // host
+        cudaMallocHost(&h->p_frame, frameWidth * frameHeight);
         h->lines = new int *[nDevs];
         h->lineCounter = new int[nDevs];
         // device
@@ -106,6 +107,7 @@ void createHandle(HoughTransformHandle *&handle, int frameWidth, int frameHeight
         handle = (HoughTransformHandle *) h;
     }
 
+    handle->frameWidth = frameWidth;
     handle->roiFrameWidth = roiFrameWidth;
     handle->roiFrameHeight = roiFrameHeight;
     switch (splitStrategy) {
@@ -147,6 +149,7 @@ void destroyHandle(HoughTransformHandle *&handle, HoughStrategy houghStrategy) {
         }
 
         // host
+        cudaFreeHost(h->p_frame);
         delete[] h->lines;
         delete[] h->lineCounter;
         // device
