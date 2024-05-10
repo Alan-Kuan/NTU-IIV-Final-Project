@@ -174,27 +174,24 @@ __global__ void findLinesKernel(int nRows, int nCols, int *accumulator, int *lin
  * in 'lines' vector
  *
  * @param handle Handle tracking relevant info accross executions
- * @param frame Video frame on which hough transform is applied
  * @param lines Vector to which found lines are added to
  */
-void houghTransformCuda(HoughTransformHandle *handle, cv::Mat frame, std::vector<Line> &lines) {
+void houghTransformCuda(HoughTransformHandle *handle, std::vector<Line> &lines) {
     CudaHandle *h = (CudaHandle *) handle;
 
     for (int dev = 0; dev < h->nDevs; dev++) {
         cudaSetDevice(dev);
-        cudaMemcpy2D(h->d_frame[dev], h->roiFrameWidth, frame.ptr() + h->frameOffset[dev], frame.cols,
+        cudaMemcpy2DAsync(h->d_frame[dev], h->roiFrameWidth, h->p_frame + h->frameOffset[dev], h->frameWidth,
             h->roiFrameWidth, h->roiFrameHeight, cudaMemcpyHostToDevice);
-        cudaMemset(h->d_accumulator[dev], 0, h->accSize);
     }
-
+    for (int dev = 0; dev < h->nDevs; dev++) {
+        cudaSetDevice(dev);
+        cudaMemsetAsync(h->d_accumulator[dev], 0, h->accSize);
+    }
     for (int dev = 0; dev < h->nDevs; dev++) {
         cudaSetDevice(dev);
         houghKernel<<<h->houghGridDim, h->houghBlockDim>>>(h->roiFrameWidth, h->roiFrameHeight, h->d_frame[dev],
             h->roiStartX, h->roiStartY, h->nRows, h->nCols, h->d_accumulator[dev], dev, h->splitStrategy);
-    }
-    for (int dev = 0; dev < h->nDevs; dev++) {
-        cudaSetDevice(dev);
-        cudaDeviceSynchronize();
     }
 
     if (h->splitStrategy != SplitStrategy::kNone) {
@@ -208,20 +205,30 @@ void houghTransformCuda(HoughTransformHandle *handle, cv::Mat frame, std::vector
 
     for (int dev = 0; dev < h->nDevs; dev++) {
         cudaSetDevice(dev);
-        cudaMemset(h->d_lineCounter[dev], 0, sizeof(int));
+        cudaMemsetAsync(h->d_lineCounter[dev], 0, sizeof(int));
+    }
+    for (int dev = 0; dev < h->nDevs; dev++) {
+        cudaSetDevice(dev);
         findLinesKernel<<<h->findLinesGridDim, h->findLinesBlockDim>>>(h->nRows, h->nCols,
             h->d_accumulator[dev], h->d_lines[dev], h->d_lineCounter[dev], dev);
+    }
+    for (int dev = 0; dev < h->nDevs; dev++) {
+        cudaSetDevice(dev);
+        cudaMemcpyAsync(h->lines[dev], h->d_lines[dev], h->linesSize, cudaMemcpyDeviceToHost);
+    }
+    for (int dev = 0; dev < h->nDevs; dev++) {
+        cudaSetDevice(dev);
+        cudaMemcpyAsync(h->lineCounter + dev, h->d_lineCounter[dev], sizeof(int), cudaMemcpyDeviceToHost);
     }
 
     for (int dev = 0; dev < h->nDevs; dev++) {
         cudaSetDevice(dev);
         cudaDeviceSynchronize();
+    }
 
-        cudaMemcpy(&h->lineCounter, h->d_lineCounter[dev], sizeof(int), cudaMemcpyDeviceToHost);
-        cudaMemcpy(h->lines, h->d_lines[dev], h->linesSize, cudaMemcpyDeviceToHost);
-
-        for (size_t i = 0; i < h->lineCounter; i += 2) {
-            lines.push_back(Line(h->lines[i], h->lines[i + 1]));
+    for (int dev = 0; dev < h->nDevs; dev++) {
+        for (size_t i = 0; i < h->lineCounter[dev]; i += 2) {
+            lines.push_back(Line(h->lines[dev][i], h->lines[dev][i + 1]));
         }
     }
 }

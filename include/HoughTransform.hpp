@@ -23,10 +23,9 @@ void houghTransformSeq(HoughTransformHandle *handle, cv::Mat frame, std::vector<
  * in 'lines' vector
  * 
  * @param handle Handle tracking relevant info accross executions
- * @param frame Video frame on which hough transform is applied
  * @param lines Vector to which found lines are added to 
  */
-void houghTransformCuda(HoughTransformHandle *handle, cv::Mat frame, std::vector<Line> &lines);
+void houghTransformCuda(HoughTransformHandle *handle, std::vector<Line> &lines);
 
 // for generating the video of accumulator
 void copyAccumulator(HoughTransformHandle *handle, int *accumulator);

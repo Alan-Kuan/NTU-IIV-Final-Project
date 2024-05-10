@@ -157,13 +157,16 @@ void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo,
         preProcFrame = applyGaussianBlur(preProcFrame);
         preProcFrame = applyCannyEdgeDetection(preProcFrame);
         preProcFrame = regionOfInterest(preProcFrame);
+        if (houghStrategy == HoughStrategy::kCuda) {
+            std::memcpy(((CudaHandle *) handle)->p_frame, preProcFrame.ptr(), frameWidth * frameHeight);
+        }
         prepTime += clock();
 
         // Perform hough transform
         houghTime -= clock();
         lines.clear();
         if (houghStrategy == HoughStrategy::kCuda)
-            houghTransformCuda(handle, preProcFrame, lines);
+            houghTransformCuda(handle, lines);
         else if (houghStrategy == HoughStrategy::kSeq)
             houghTransformSeq(handle, preProcFrame, lines);
         houghTime += clock();
