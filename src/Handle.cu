@@ -91,7 +91,7 @@ void createHandle(HoughTransformHandle *&handle, int frameWidth, int frameHeight
             ncclCommInitAll(h->comms, nDevs, h->devs);
         }
 
-        h->houghBlockDim = dim3(5, 5, 32);
+        h->houghBlockDim = dim3(32, 5, 5);
         switch (splitStrategy) {
         case SplitStrategy::kLeftRight:
             h->houghGridDim = dim3(ceil(roiFrameHeight / 5), ceil(roiFrameWidth / nDevs / 5));
