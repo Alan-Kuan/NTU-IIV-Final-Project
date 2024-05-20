@@ -17,10 +17,20 @@
  * executions of different frames.
  */
 struct HoughTransformHandle {
-    /// Number of rows in the accumulator (number of possible rhos)
+    int frameSize;
     int nRows;
-    /// Number of columns in the accumulator (number of possible thetas)
     int nCols;
+    int *d_lineCounter[2];
+    int *lines[2];
+    int *d_lines[2];
+    uchar *d_frame[2];
+    int *d_accumulator[2];
+    dim3 houghBlockDim;
+    dim3 houghGridDim;
+    dim3 findLinesBlockDim;
+    dim3 findLinesGridDim;
+    cudaStream_t streams[2];
+    int lineCounter[2];
 };
 
 /**
@@ -37,17 +47,7 @@ struct SeqHandle: HoughTransformHandle {
  * well as device only needs to be allocated only once for all frames.
  */
 struct CudaHandle: HoughTransformHandle {
-    int frameSize;
-    int *lines;
-    int *d_lines;
-    int lineCounter;
-    int *d_lineCounter;
-    uchar *d_frame;
-    int *d_accumulator;
-    dim3 houghBlockDim;
-    dim3 houghGridDim;
-    dim3 findLinesBlockDim;
-    dim3 findLinesGridDim;
+    
 };
 
 /**
@@ -84,6 +84,6 @@ void houghTransformSeq(HoughTransformHandle *handle, cv::Mat frame, std::vector<
  * @param frame Video frame on which hough transform is applied
  * @param lines Vector to which found lines are added to 
  */
-void houghTransformCuda(HoughTransformHandle *handle, cv::Mat frame, std::vector<Line> &lines);
+void houghTransformCuda(HoughTransformHandle *handle, cv::Mat frame, int gpuIndex);
 
 #endif  // HOUGH_TRANSFORM_H

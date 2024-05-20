@@ -1,7 +1,7 @@
 add_library(htlib HoughTransform.cu)
 
 add_executable(lanedet
-    LaneDetection.cpp
+    LaneDetection.cu
     Line.cpp
     Preprocessing.cpp)
 set_target_properties(lanedet

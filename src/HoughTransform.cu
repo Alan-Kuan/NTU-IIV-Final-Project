@@ -25,10 +25,8 @@
  */
 __host__ __device__ double calcRho(double x, double y, double theta) {
     double thetaRadian = (theta * M_PI) / 180.0;
-    double sinVal, cosVal;
 
-    sincos(thetaRadian, &sinVal, &cosVal);
-    return x * cosVal + y * sinVal;
+    return x * cos(thetaRadian) + y * sin(thetaRadian);
 }
 
 /**
@@ -160,30 +158,27 @@ __global__ void findLinesKernel(int nRows, int nCols, int *accumulator, int *lin
  * @param frame Video frame on which hough transform is applied
  * @param lines Vector to which found lines are added to
  */
-void houghTransformCuda(HoughTransformHandle *handle, cv::Mat frame, std::vector<Line> &lines) {
+
+/**/
+void houghTransformCuda(HoughTransformHandle *handle, cv::Mat frame, int gpuIndex) {
     CudaHandle *h = (CudaHandle *) handle;
+    cudaSetDevice(gpuIndex);
 
-    cudaMemcpy(h->d_frame, frame.ptr(), h->frameSize, cudaMemcpyHostToDevice);
-    cudaMemset(h->d_accumulator, 0, h->nRows * h->nCols * sizeof(int));
+    
+    cudaMemcpyAsync(h->d_frame[gpuIndex], frame.ptr(), h->frameSize, cudaMemcpyHostToDevice);
+    cudaMemsetAsync(h->d_accumulator[gpuIndex], 0, h->nRows * h->nCols * sizeof(int));
 
-    houghKernel<<<h->houghGridDim, h->houghBlockDim>>>(frame.cols, frame.rows, h->d_frame, h->nRows, h->nCols, h->d_accumulator);
-    cudaDeviceSynchronize();
+    
+    houghKernel<<<h->houghGridDim, h->houghBlockDim>>>(
+        frame.cols, frame.rows, h->d_frame[gpuIndex], h->nRows, h->nCols, h->d_accumulator[gpuIndex]);
 
-    cudaError err = cudaGetLastError();
-    if (err != cudaSuccess)
-        std::cerr << "Error: " << cudaGetErrorString(err) << std::endl;
+    cudaMemsetAsync(h->d_lineCounter[gpuIndex], 0, sizeof(int));
+    findLinesKernel<<<h->findLinesGridDim, h->findLinesBlockDim>>>(
+        h->nRows, h->nCols, h->d_accumulator[gpuIndex], h->d_lines[gpuIndex], h->d_lineCounter[gpuIndex]);
 
-    cudaMemset(h->d_lineCounter, 0, sizeof(int));
-    findLinesKernel<<<h->findLinesGridDim, h->findLinesBlockDim>>>(h->nRows, h->nCols,
-        h->d_accumulator, h->d_lines, h->d_lineCounter);
-    cudaDeviceSynchronize();
-
-    cudaMemcpy(&h->lineCounter, h->d_lineCounter, sizeof(int), cudaMemcpyDeviceToHost);
-    cudaMemcpy(h->lines, h->d_lines, 2 * MAX_NUM_LINES * sizeof(int), cudaMemcpyDeviceToHost);
-
-    for (int i = 0; i < h->lineCounter - 1; i += 2) {
-        lines.push_back(Line(h->lines[i], h->lines[i + 1]));
-    }
+    cudaMemcpyAsync(&handle->lineCounter[gpuIndex], handle->d_lineCounter[gpuIndex], sizeof(int), cudaMemcpyDeviceToHost);
+    cudaMemcpyAsync(handle->lines[gpuIndex], handle->d_lines[gpuIndex], 2 * MAX_NUM_LINES * sizeof(int), cudaMemcpyDeviceToHost);
+                    
 }
 
 /**
@@ -199,14 +194,17 @@ void createHandle(HoughTransformHandle *&handle, int houghStrategy, int frameWid
     if (houghStrategy == CUDA) {
         CudaHandle *h = new CudaHandle();
         h->frameSize = frameWidth * frameHeight * sizeof(uchar);
-        cudaMallocHost(&(h->lines), 2 * MAX_NUM_LINES * sizeof(int));
-        h->lineCounter = 0;
+        
+        for (int i = 0; i < 2; ++i){
+            cudaSetDevice(i);
 
-        cudaMalloc(&h->d_lines, 2 * MAX_NUM_LINES * sizeof(int));
-        cudaMalloc(&h->d_lineCounter, sizeof(int));
-        cudaMalloc(&h->d_frame, h->frameSize);
-        cudaMalloc(&h->d_accumulator, nRows * nCols * sizeof(int));
-
+            cudaMalloc(&h->d_lines[i], 2 * MAX_NUM_LINES * sizeof(int));
+            cudaMalloc(&h->d_lineCounter[i], sizeof(int));
+            cudaMalloc(&h->d_frame[i], h->frameSize);
+            cudaMalloc(&h->d_accumulator[i], nRows * nCols * sizeof(int));
+            cudaMallocHost(&(h->lines[i]), 2 * MAX_NUM_LINES * sizeof(int));     
+        }
+            
         h->houghBlockDim = dim3(32, 5, 5);
         h->houghGridDim = dim3(ceil(frameHeight / 5), ceil(frameWidth / 5));
         h->findLinesBlockDim = dim3(32, 32);
@@ -229,16 +227,20 @@ void createHandle(HoughTransformHandle *&handle, int houghStrategy, int frameWid
  * @param handle Handle to be destroyed
  * @param houghStrategy Hough strategy that was used to create the handle
  */
+
 void destroyHandle(HoughTransformHandle *&handle, int houghStrategy) {
     if (houghStrategy == CUDA) {
         CudaHandle *h = (CudaHandle *) handle;
 
-        cudaFree(h->d_lines);
-        cudaFree(h->d_lineCounter);
-        cudaFree(h->d_frame);
-        cudaFree(h->d_accumulator);
-
-        cudaFreeHost(h->lines);
+        for (int i = 0; i < 2; ++i) {
+            cudaSetDevice(i);
+            cudaFree(h->d_lines[i]);
+            cudaFree(h->d_lineCounter[i]);
+            cudaFree(h->d_frame[i]);
+            cudaFree(h->d_accumulator[i]);
+            cudaFreeHost(h->lines[i]);
+        }
+        
     } else if (houghStrategy == SEQUENTIAL) {
         SeqHandle *h = (SeqHandle *) handle;
         delete[] h->accumulator;
@@ -247,3 +249,4 @@ void destroyHandle(HoughTransformHandle *&handle, int houghStrategy) {
     delete handle;
     handle = NULL;
 }
+

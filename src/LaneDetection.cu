@@ -1,13 +1,14 @@
 #include <ctime>
 #include <iomanip>
 #include <iostream>
-
+#include <cuda_runtime.h>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/videoio.hpp>
 
 #include "HoughTransform.hpp"
 #include "Line.hpp"
 #include "Preprocessing.hpp"
+#define MAX_NUM_LINES 10
 
 extern void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo, int houghStrategy);
 extern void drawLines(cv::Mat &frame, std::vector<Line> lines);
@@ -54,12 +55,13 @@ int main(int argc, char *argv[]) {
  * @param houghStrategy Strategy which should be used to parform hough transform
  */
 void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo, int houghStrategy) {
-    cv::Mat frame, preProcFrame;
-    std::vector<Line> lines;
+    cv::Mat frames[2], preProcFrames[2];
+    std::vector<Line> lines[2];
 
     clock_t readTime = 0;
 	clock_t prepTime = 0;
 	clock_t houghTime = 0;
+    clock_t redundantTime = 0;
 	clock_t writeTime = 0;
     clock_t totalTime = 0;
 
@@ -71,41 +73,79 @@ void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo, int h
 
     HoughTransformHandle *handle;
     createHandle(handle, houghStrategy, frameWidth, frameHeight);
+    int frameIndex = 0;
 
 	for( ; ; ) {
+        
+        int gpuIndex = frameIndex % 2;
+        
         // Read next frame
         readTime -= clock();
-		inputVideo >> frame;
+        inputVideo >> frames[gpuIndex];
         readTime += clock();
-		if(frame.empty())
-			break;
+        if (frames[gpuIndex].empty())
+            break;
 
         // Apply pre-processing steps
         prepTime -= clock();
-        preProcFrame = filterLanes(frame);
-        preProcFrame = applyGaussianBlur(preProcFrame);
-        preProcFrame = applyCannyEdgeDetection(preProcFrame);
-        preProcFrame = regionOfInterest(preProcFrame);
+        preProcFrames[gpuIndex] = filterLanes(frames[gpuIndex]);
+        preProcFrames[gpuIndex] = applyGaussianBlur(preProcFrames[gpuIndex]);
+        preProcFrames[gpuIndex] = applyCannyEdgeDetection(preProcFrames[gpuIndex]);
+        preProcFrames[gpuIndex] = regionOfInterest(preProcFrames[gpuIndex]);
         prepTime += clock();
 
         // Perform hough transform
         houghTime -= clock();
-        lines.clear();
+        if(frameIndex > 1)
+            redundantTime += clock();
         if (houghStrategy == CUDA)
-            houghTransformCuda(handle, preProcFrame, lines);
+            houghTransformCuda(handle, preProcFrames[gpuIndex], gpuIndex);
         else if (houghStrategy == SEQUENTIAL)
-            houghTransformSeq(handle, preProcFrame, lines);
-        houghTime += clock();
+            houghTransformSeq(handle, preProcFrames[gpuIndex], lines[gpuIndex]);
+     
+        if (frameIndex > 0) {
+            int prevGpuIndex = gpuIndex ^ 1;
+            cudaSetDevice(prevGpuIndex);
+            cudaDeviceSynchronize();
+            
+            lines[prevGpuIndex].clear();
+            for (int i = 0; i < handle->lineCounter[prevGpuIndex] - 1; i += 2) {
+                lines[prevGpuIndex].push_back(Line(handle->lines[prevGpuIndex][i], handle->lines[prevGpuIndex][i + 1]));
+            }
+            houghTime += clock();
+            houghTime -= redundantTime;
+            redundantTime = 0;
+            redundantTime -= clock();
+            
+            // video
+            writeTime -= clock();
+            drawLines(frames[prevGpuIndex], lines[prevGpuIndex]);
+            outputVideo << frames[prevGpuIndex];
+            writeTime += clock();
+        }
 
-        // Draw lines to frame and write to output video
-        writeTime -= clock();
-        drawLines(frame, lines);
-        outputVideo << frame;
-        writeTime += clock();
+        frameIndex++;
     }
-
-    destroyHandle(handle, houghStrategy);
-
+    
+    int gpuIndex = frameIndex % 2;
+    int prevGpuIndex = gpuIndex ^ 1;
+    cudaSetDevice(prevGpuIndex);
+    cudaDeviceSynchronize();
+    
+    lines[prevGpuIndex].clear();
+    for (int i = 0; i < handle->lineCounter[prevGpuIndex] - 1; i += 2) {
+        lines[prevGpuIndex].push_back(Line(handle->lines[prevGpuIndex][i], handle->lines[prevGpuIndex][i + 1]));
+    }
+    redundantTime += clock();
+    houghTime += clock();
+    houghTime -= redundantTime;
+    // video
+    writeTime -= clock();
+    drawLines(frames[prevGpuIndex], lines[prevGpuIndex]);
+    outputVideo << frames[prevGpuIndex];
+    writeTime += clock();
+    
+    
     totalTime += clock();
     std::cout << "Read\tPrep\tHough\tWrite\tTotal" << std::endl;
     std::cout << std::setprecision(4) << (((float) readTime) / CLOCKS_PER_SEC) << "\t"
