@@ -156,9 +156,9 @@ __global__ void houghKernel(int roiFrameWidth, int roiFrameHeight, unsigned char
  * CUDA kernel responsible for finding lines based on the number of votes for
  * every rho/theta combination
  */
-__global__ void findLinesKernel(int nRows, int nCols, int *accumulator, int *lines, int *lineCounter, int dev) {
+__global__ void findLinesKernel(int nRows, int nCols, int *accumulator, int *lines, int *lineCounter, int nDevs, int dev) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
-    int j = 2 * (blockIdx.y * blockDim.y + threadIdx.y) + dev;
+    int j = nDevs * (blockIdx.y * blockDim.y + threadIdx.y) + dev;
 
     if (accumulator[i * nCols + j] >= THRESHOLD && isLocalMaximum(i, j, nRows, nCols, accumulator)) {
         int insertPt = atomicAdd(lineCounter, 2);
@@ -210,7 +210,7 @@ void houghTransformCuda(HoughTransformHandle *handle, std::vector<Line> &lines) 
     for (int dev = 0; dev < h->nDevs; dev++) {
         cudaSetDevice(dev);
         findLinesKernel<<<h->findLinesGridDim, h->findLinesBlockDim>>>(h->nRows, h->nCols,
-            h->d_accumulator[dev], h->d_lines[dev], h->d_lineCounter[dev], dev);
+            h->d_accumulator[dev], h->d_lines[dev], h->d_lineCounter[dev], h->nDevs, dev);
     }
     for (int dev = 0; dev < h->nDevs; dev++) {
         cudaSetDevice(dev);
