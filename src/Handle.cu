@@ -65,7 +65,7 @@ void createHandle(HoughTransformHandle *&handle, int frameWidth, int frameHeight
         // host
         cudaMallocHost(&h->p_frame, frameWidth * frameHeight);
         h->lines = new int *[nDevs];
-        h->lineCounter = new int[nDevs];
+        h->lineCounter = new int *[nDevs];
         // device
         h->d_lines = new int *[nDevs];
         h->d_lineCounter = new int *[nDevs];
@@ -76,6 +76,7 @@ void createHandle(HoughTransformHandle *&handle, int frameWidth, int frameHeight
             cudaSetDevice(dev);
             // host
             cudaMallocHost(h->lines + dev, h->linesSize);
+            cudaMallocHost(h->lineCounter + dev, sizeof(int));
             // device
             cudaMalloc(h->d_lines + dev, h->linesSize);
             cudaMalloc(h->d_lineCounter + dev, sizeof(int));
@@ -147,6 +148,7 @@ void destroyHandle(HoughTransformHandle *&handle, HoughStrategy houghStrategy) {
             cudaSetDevice(dev);
             // host
             cudaFreeHost(h->lines[dev]);
+            cudaFreeHost(h->lineCounter[dev]);
             // device
             cudaFree(h->d_lines[dev]);
             cudaFree(h->d_lineCounter[dev]);

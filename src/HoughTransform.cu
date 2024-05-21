@@ -218,7 +218,7 @@ void houghTransformCuda(HoughTransformHandle *handle, std::vector<Line> &lines) 
     }
     for (int dev = 0; dev < h->nDevs; dev++) {
         cudaSetDevice(dev);
-        cudaMemcpyAsync(h->lineCounter + dev, h->d_lineCounter[dev], sizeof(int), cudaMemcpyDeviceToHost);
+        cudaMemcpyAsync(h->lineCounter[dev], h->d_lineCounter[dev], sizeof(int), cudaMemcpyDeviceToHost);
     }
 
     for (int dev = 0; dev < h->nDevs; dev++) {
@@ -227,7 +227,7 @@ void houghTransformCuda(HoughTransformHandle *handle, std::vector<Line> &lines) 
     }
 
     for (int dev = 0; dev < h->nDevs; dev++) {
-        for (size_t i = 0; i < h->lineCounter[dev]; i += 2) {
+        for (size_t i = 0; i < *(h->lineCounter[dev]); i += 2) {
             lines.push_back(Line(h->lines[dev][i], h->lines[dev][i + 1]));
         }
     }

@@ -75,7 +75,7 @@ struct CudaHandle: HoughTransformHandle {
     // buffers
     int **lines;
     int **d_lines;
-    int *lineCounter;
+    int **lineCounter;
     int **d_lineCounter;
     unsigned char *p_frame;  // global size
     unsigned char **d_frame;  // local roi size
