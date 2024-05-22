@@ -183,13 +183,7 @@ void houghTransformCuda(HoughTransformHandle *handle, std::vector<Line> &lines) 
         cudaSetDevice(dev);
         cudaMemcpy2DAsync(h->d_frame[dev], h->roiFrameWidth, h->p_frame + h->frameOffset[dev], h->frameWidth,
             h->roiFrameWidth, h->roiFrameHeight, cudaMemcpyHostToDevice);
-    }
-    for (int dev = 0; dev < h->nDevs; dev++) {
-        cudaSetDevice(dev);
         cudaMemsetAsync(h->d_accumulator[dev], 0, h->accSize);
-    }
-    for (int dev = 0; dev < h->nDevs; dev++) {
-        cudaSetDevice(dev);
         houghKernel<<<h->houghGridDim, h->houghBlockDim>>>(h->roiFrameWidth, h->roiFrameHeight, h->d_frame[dev],
             h->roiStartX, h->roiStartY, h->nRows, h->nCols, h->d_accumulator[dev], dev, h->splitStrategy);
     }
@@ -206,18 +200,9 @@ void houghTransformCuda(HoughTransformHandle *handle, std::vector<Line> &lines) 
     for (int dev = 0; dev < h->nDevs; dev++) {
         cudaSetDevice(dev);
         cudaMemsetAsync(h->d_lineCounter[dev], 0, sizeof(int));
-    }
-    for (int dev = 0; dev < h->nDevs; dev++) {
-        cudaSetDevice(dev);
         findLinesKernel<<<h->findLinesGridDim, h->findLinesBlockDim>>>(h->nRows, h->nCols,
             h->d_accumulator[dev], h->d_lines[dev], h->d_lineCounter[dev], h->nDevs, dev);
-    }
-    for (int dev = 0; dev < h->nDevs; dev++) {
-        cudaSetDevice(dev);
         cudaMemcpyAsync(h->lines[dev], h->d_lines[dev], h->linesSize, cudaMemcpyDeviceToHost);
-    }
-    for (int dev = 0; dev < h->nDevs; dev++) {
-        cudaSetDevice(dev);
         cudaMemcpyAsync(h->lineCounter[dev], h->d_lineCounter[dev], sizeof(int), cudaMemcpyDeviceToHost);
     }
 
