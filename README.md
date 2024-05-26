@@ -8,7 +8,7 @@ We forked and optimized it by different means, such as reducing the region to pr
 [![Presentation Video](https://img.youtube.com/vi/nT5m7KJRBtQ/0.jpg)](https://youtu.be/nT5m7KJRBtQ)
 
 ## Environment
-See [env](tree/master/env) for details about our developing environment.
+See [env](https://github.com/Alan-Kuan/NTU-IIV-Final-Project/tree/master/env) for details about our developing environment.
 
 ## Dependencies
 - CMake
