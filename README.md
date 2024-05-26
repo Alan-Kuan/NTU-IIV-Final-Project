@@ -2,6 +2,11 @@
 This work originates from the author of the repo [cuda-lane-detection](https://github.com/jonaspfab/cuda-lane-detection).
 We forked and optimized it by different means, such as reducing the region to process and distributing the workload to 2 GPU devices.
 
+![Inputs & Outputs](https://github.com/Alan-Kuan/NTU-IIV-Final-Project/assets/24734750/0d145279-00cc-43cb-9fcc-e54f6f675b65)
+
+## Presentation
+[![Presentation Video](https://img.youtube.com/vi/nT5m7KJRBtQ/0.jpg)](https://youtu.be/nT5m7KJRBtQ)
+
 ## Dependencies
 - CMake
 - Make / Ninja
