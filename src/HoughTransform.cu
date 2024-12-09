@@ -160,23 +160,23 @@ __global__ void findLinesKernel(int nRows, int nCols, int *accumulator, int *lin
  */
 
 /**/
-void houghTransformCuda(HoughTransformHandle *handle, cv::Mat frame, int gpuIndex) {
+void houghTransformCuda(HoughTransformHandle *handle, int gpuIndex) {
     CudaHandle *h = (CudaHandle *) handle;
     cudaSetDevice(gpuIndex);
 
     
-    cudaMemcpyAsync(h->d_frame[gpuIndex], frame.ptr(), h->frameSize, cudaMemcpyHostToDevice);
+    cudaMemcpyAsync(h->d_frame[gpuIndex], h->p_frame, h->frameSize, cudaMemcpyHostToDevice);
     cudaMemsetAsync(h->d_accumulator[gpuIndex], 0, h->nRows * h->nCols * sizeof(int));
 
     
     houghKernel<<<h->houghGridDim, h->houghBlockDim>>>(
-        frame.cols, frame.rows, h->d_frame[gpuIndex], h->nRows, h->nCols, h->d_accumulator[gpuIndex]);
+        h->frameWidth, h->frameHeight, h->d_frame[gpuIndex], h->nRows, h->nCols, h->d_accumulator[gpuIndex]);
 
     cudaMemsetAsync(h->d_lineCounter[gpuIndex], 0, sizeof(int));
     findLinesKernel<<<h->findLinesGridDim, h->findLinesBlockDim>>>(
         h->nRows, h->nCols, h->d_accumulator[gpuIndex], h->d_lines[gpuIndex], h->d_lineCounter[gpuIndex]);
 
-    cudaMemcpyAsync(&handle->lineCounter[gpuIndex], handle->d_lineCounter[gpuIndex], sizeof(int), cudaMemcpyDeviceToHost);
+    cudaMemcpyAsync(handle->lineCounter[gpuIndex], handle->d_lineCounter[gpuIndex], sizeof(int), cudaMemcpyDeviceToHost);
     cudaMemcpyAsync(handle->lines[gpuIndex], handle->d_lines[gpuIndex], 2 * MAX_NUM_LINES * sizeof(int), cudaMemcpyDeviceToHost);
                     
 }
@@ -202,9 +202,11 @@ void createHandle(HoughTransformHandle *&handle, int houghStrategy, int frameWid
             cudaMalloc(&h->d_lineCounter[i], sizeof(int));
             cudaMalloc(&h->d_frame[i], h->frameSize);
             cudaMalloc(&h->d_accumulator[i], nRows * nCols * sizeof(int));
-            cudaMallocHost(&(h->lines[i]), 2 * MAX_NUM_LINES * sizeof(int));     
+            cudaMallocHost(&(h->lines[i]), 2 * MAX_NUM_LINES * sizeof(int));
+            cudaMallocHost((void**)&(h->lineCounter[i]), sizeof(int));  
+             
         }
-            
+        cudaMallocHost((void**)&(h->p_frame), frameWidth * frameHeight);  
         h->houghBlockDim = dim3(32, 5, 5);
         h->houghGridDim = dim3(ceil(frameHeight / 5), ceil(frameWidth / 5));
         h->findLinesBlockDim = dim3(32, 32);
@@ -219,11 +221,13 @@ void createHandle(HoughTransformHandle *&handle, int houghStrategy, int frameWid
 
     handle->nRows = nRows;
     handle->nCols = nCols;
+    handle->frameWidth = frameWidth;
+    handle->frameHeight = frameHeight;
 }
 
 /**
  * Frees memory on host and device that was allocated for the handle
- *
+ * 
  * @param handle Handle to be destroyed
  * @param houghStrategy Hough strategy that was used to create the handle
  */
@@ -239,13 +243,15 @@ void destroyHandle(HoughTransformHandle *&handle, int houghStrategy) {
             cudaFree(h->d_frame[i]);
             cudaFree(h->d_accumulator[i]);
             cudaFreeHost(h->lines[i]);
+            cudaFreeHost(h->lineCounter[i]);
+            
         }
         
+    cudaFreeHost(h->p_frame);
     } else if (houghStrategy == SEQUENTIAL) {
         SeqHandle *h = (SeqHandle *) handle;
         delete[] h->accumulator;
     }
-
     delete handle;
     handle = NULL;
 }

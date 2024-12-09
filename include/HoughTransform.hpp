@@ -30,7 +30,10 @@ struct HoughTransformHandle {
     dim3 findLinesBlockDim;
     dim3 findLinesGridDim;
     cudaStream_t streams[2];
-    int lineCounter[2];
+    int *lineCounter[2];
+    unsigned char *p_frame;  // global size
+    int frameHeight;
+    int frameWidth;
 };
 
 /**
@@ -84,6 +87,6 @@ void houghTransformSeq(HoughTransformHandle *handle, cv::Mat frame, std::vector<
  * @param frame Video frame on which hough transform is applied
  * @param lines Vector to which found lines are added to 
  */
-void houghTransformCuda(HoughTransformHandle *handle, cv::Mat frame, int gpuIndex);
+void houghTransformCuda(HoughTransformHandle *handle, int gpuIndex);
 
 #endif  // HOUGH_TRANSFORM_H

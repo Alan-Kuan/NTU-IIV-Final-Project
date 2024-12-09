@@ -92,14 +92,17 @@ void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo, int h
         preProcFrames[gpuIndex] = applyGaussianBlur(preProcFrames[gpuIndex]);
         preProcFrames[gpuIndex] = applyCannyEdgeDetection(preProcFrames[gpuIndex]);
         preProcFrames[gpuIndex] = regionOfInterest(preProcFrames[gpuIndex]);
+        std::memcpy(((CudaHandle *)handle)->p_frame, preProcFrames[gpuIndex].ptr(), frameWidth * frameHeight);
         prepTime += clock();
-
+        
         // Perform hough transform
         houghTime -= clock();
         if(frameIndex > 1)
             redundantTime += clock();
         if (houghStrategy == CUDA)
-            houghTransformCuda(handle, preProcFrames[gpuIndex], gpuIndex);
+             
+            houghTransformCuda(handle, gpuIndex); 
+            
         else if (houghStrategy == SEQUENTIAL)
             houghTransformSeq(handle, preProcFrames[gpuIndex], lines[gpuIndex]);
      
@@ -109,7 +112,7 @@ void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo, int h
             cudaDeviceSynchronize();
             
             lines[prevGpuIndex].clear();
-            for (int i = 0; i < handle->lineCounter[prevGpuIndex] - 1; i += 2) {
+            for (int i = 0; i < *(handle->lineCounter[prevGpuIndex]) - 1; i += 2) {
                 lines[prevGpuIndex].push_back(Line(handle->lines[prevGpuIndex][i], handle->lines[prevGpuIndex][i + 1]));
             }
             houghTime += clock();
@@ -133,7 +136,7 @@ void detectLanes(cv::VideoCapture inputVideo, cv::VideoWriter outputVideo, int h
     cudaDeviceSynchronize();
     
     lines[prevGpuIndex].clear();
-    for (int i = 0; i < handle->lineCounter[prevGpuIndex] - 1; i += 2) {
+    for (int i = 0; i < *(handle->lineCounter[prevGpuIndex]) - 1; i += 2) {
         lines[prevGpuIndex].push_back(Line(handle->lines[prevGpuIndex][i], handle->lines[prevGpuIndex][i + 1]));
     }
     redundantTime += clock();
